@@ -21,28 +21,21 @@ JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")  # Secret for signing JWTs
 secret_client = secretmanager.SecretManagerServiceClient()
 
 
-# --- Functions ---
-def get_secret():
+# --- Functions to retrieve secrets from Secret Manager ---
+def get_secret(secret_name):
     """
-    Retrieves the API key from Google Secret Manager.
+    Retrieves a secret from Google Secret Manager.
     """
-    if not GCP_PROJECT_ID or not API_KEY_SECRET:
-        print("Error: GCP_PROJECT_ID or API_KEY_SECRET environment variable not set.")
+    if not GCP_PROJECT_ID or not secret_name:
         return None
 
     try:
-        # Build the resource name of the secret version.
-        name = f"projects/{GCP_PROJECT_ID}/secrets/{API_KEY_SECRET}/versions/latest"
-
-        # Access the secret version.
+        name = f"projects/{GCP_PROJECT_ID}/secrets/{secret_name}/versions/latest"
         response = secret_client.access_secret_version(request={"name": name})
-
-        # Return the secret payload.
         secret_value = response.payload.data.decode("UTF-8")
-        print("Successfully retrieved API key from Secret Manager.")
         return secret_value
     except Exception as e:
-        print(f"Failed to retrieve secret '{API_KEY_SECRET}': {str(e)}")
+        print(f"Failed to retrieve secret '{secret_name}': {str(e)}")
         return None
 
 
