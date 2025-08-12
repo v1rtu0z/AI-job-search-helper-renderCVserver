@@ -1,0 +1,14 @@
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/AI-job-search-helper-renderCVserver/rendercv-server:$COMMIT_SHA', '.']
+
+  # Step 2: Push the Docker image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/AI-job-search-helper-renderCVserver/rendercv-server:$COMMIT_SHA']
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/AI-job-search-helper-renderCVserver/rendercv-server:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
