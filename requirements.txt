@@ -1,7 +1,9 @@
 rendercv[full]
 flask
 flask_cors
+flask_limiter
 gunicorn
 protobuf
 google
 google-cloud-secret-manager
+PyJWT

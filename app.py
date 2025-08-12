@@ -1,17 +1,21 @@
+import datetime
+import os
+import subprocess
 import tempfile
 
+import jwt
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import subprocess
-import os
-
-# Import the Google Secret Manager client library
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from google.cloud import secretmanager
 
 # --- Configuration ---
 # Get the GCP project ID and secret name from environment variables.
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 API_KEY_SECRET = os.environ.get("API_KEY_SECRET")
+EXTENSION_SECRET_NAME = os.environ.get("EXTENSION_SECRET_NAME")
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")  # Secret for signing JWTs
 
 # Create the Secret Manager client
 secret_client = secretmanager.SecretManagerServiceClient()
@@ -46,10 +50,18 @@ def get_secret():
 app = Flask(__name__)
 CORS(app)
 
-# Retrieve the API key when the application starts
-API_KEY = get_secret()
-if not API_KEY:
-    print("WARNING: API key not available. All requests will be unauthorized.")
+# Initialize the rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,  # Rate limit based on IP address
+    app=app
+)
+
+# Cache the secrets so we don't call Secret Manager on every request
+API_KEY = get_secret(API_KEY_SECRET)
+EXTENSION_SECRET = get_secret(EXTENSION_SECRET_NAME)
+
+if not API_KEY or not EXTENSION_SECRET or not JWT_SECRET_KEY:
+    print("WARNING: One or more critical secrets are missing. Server will not function securely.")
 
 
 # This is the root route.
@@ -58,24 +70,57 @@ def home():
     return '<h1>CV Generator is running!</h1>'
 
 
+@app.route('/authenticate', methods=['POST'])
+@limiter.limit("5 per minute")  # Limit authentication attempts
+def authenticate():
+    """
+    Endpoint for the extension to get a temporary JWT token.
+    It requires the extension to send a 'client_secret' in the request body.
+    """
+    data = request.json
+    if not data or 'client_secret' not in data:
+        return jsonify({'error': 'Missing client_secret in request'}), 400
+
+    client_secret = data['client_secret']
+
+    if client_secret == EXTENSION_SECRET:
+        payload = {
+            'exp': datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1),
+            'iat': datetime.datetime.now(datetime.UTC),
+            'sub': 'extension-user'
+        }
+        token = jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
+        return jsonify({'token': token}), 200
+    else:
+        return jsonify({'error': 'Invalid client secret'}), 401
+
+
 @app.route('/generate-cv', methods=['POST'])
+@limiter.limit("12 per minute")  # Limit authentication attempts
 def generate_cv():
     """
-    Generates a PDF CV using the rendercv CLI based on a JSON payload.
-    The payload should include:
-    - yaml_string: The YAML content for the CV.
-    - filename: The desired output filename for the PDF.
-    - full_name: The user's full name, used for generating the initial YAML file.
-    - theme: An optional theme name. Defaults to 'engineeringclassic'.
-    - design_yaml_string: Optional content for the design file.
-    - locale_yaml_string: Optional content for the locale file.
+    Handles POST requests to generate a CV.
+    Now requires a valid JWT token in the 'Authorization' header.
     """
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'Authorization token is missing or invalid'}), 401
+
+    token = auth_header.split(" ")[1]
+
+    try:
+        jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
+    except jwt.exceptions.ExpiredSignatureError:
+        return jsonify({'error': 'Token has expired'}), 401
+    except jwt.exceptions.InvalidTokenError:
+        return jsonify({'error': 'Invalid token'}), 401
+
     if not request.json:
         return jsonify({"error": "No JSON data provided"}), 400
 
     # Get the API key from the request header
     api_key_from_request = request.headers.get('X-API-Key')
-    
+
     # Check if the API key is valid
     if api_key_from_request != API_KEY:
         return jsonify({'error': 'Unauthorized'}), 401
