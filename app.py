@@ -85,6 +85,9 @@ def authenticate():
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
         return jsonify({'token': token}), 200
     else:
+        # todo: remove me
+        print(f"Received client secret: {client_secret}")
+        print(f"Extension secret: {EXTENSION_SECRET}")
         return jsonify({'error': 'Invalid client secret'}), 401
 
 
