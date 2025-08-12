@@ -12,11 +12,9 @@ from flask_limiter.util import get_remote_address
 # --- Configuration ---
 # Get the GCP project ID and secret name from environment variables.
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-API_KEY_SECRET = os.environ.get("API_KEY_SECRET")
 EXTENSION_SECRET_NAME = os.environ.get("EXTENSION_SECRET_NAME")
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
-API_KEY = os.environ.get("API_KEY_SECRET")
 EXTENSION_SECRET = os.environ.get("EXTENSION_SECRET_NAME")
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -28,7 +26,7 @@ limiter = Limiter(
     app=app
 )
 
-if not API_KEY or not EXTENSION_SECRET or not JWT_SECRET_KEY:
+if not EXTENSION_SECRET or not JWT_SECRET_KEY:
     print("WARNING: One or more critical secrets are missing. Server will not function securely.")
 
 
@@ -85,13 +83,6 @@ def generate_cv():
 
     if not request.json:
         return jsonify({"error": "No JSON data provided"}), 400
-
-    # Get the API key from the request header
-    api_key_from_request = request.headers.get('X-API-Key')
-
-    # Check if the API key is valid
-    if api_key_from_request != API_KEY:
-        return jsonify({'error': 'Unauthorized'}), 401
 
     yaml_string = request.json.get('yaml_string')
     filename = request.json.get('filename')
