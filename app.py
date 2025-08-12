@@ -1,158 +1,61 @@
-import os
-import subprocess
 import tempfile
 
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+import subprocess
+import os
 
+# Import the Google Secret Manager client library
+from google.cloud import secretmanager
+
+# --- Configuration ---
+# Get the GCP project ID and secret name from environment variables.
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+API_KEY_SECRET = os.environ.get("API_KEY_SECRET")
+
+# Create the Secret Manager client
+secret_client = secretmanager.SecretManagerServiceClient()
+
+
+# --- Functions ---
+def get_secret():
+    """
+    Retrieves the API key from Google Secret Manager.
+    """
+    if not GCP_PROJECT_ID or not API_KEY_SECRET:
+        print("Error: GCP_PROJECT_ID or API_KEY_SECRET environment variable not set.")
+        return None
+
+    try:
+        # Build the resource name of the secret version.
+        name = f"projects/{GCP_PROJECT_ID}/secrets/{API_KEY_SECRET}/versions/latest"
+
+        # Access the secret version.
+        response = secret_client.access_secret_version(request={"name": name})
+
+        # Return the secret payload.
+        secret_value = response.payload.data.decode("UTF-8")
+        print("Successfully retrieved API key from Secret Manager.")
+        return secret_value
+    except Exception as e:
+        print(f"Failed to retrieve secret '{API_KEY_SECRET}': {str(e)}")
+        return None
+
+
+# --- Flask App Initialization ---
 app = Flask(__name__)
+CORS(app)
 
-API_KEY = '' # TODO: Fetch this from a secret manager
+# Retrieve the API key when the application starts
+API_KEY = get_secret()
+if not API_KEY:
+    print("WARNING: API key not available. All requests will be unauthorized.")
 
-# TODO: Move these two variables into the extension
 
-DEFAULT_DESIGN_YAML = """
-design:
-  theme: engineeringclassic
-  page:
-    size: us-letter
-    top_margin: 2cm
-    bottom_margin: 2cm
-    left_margin: 2cm
-    right_margin: 2cm
-    show_page_numbering: false
-    show_last_updated_date: false
-  colors:
-    text: rgb(0, 0, 0)
-    name: rgb(0, 79, 144)
-    connections: rgb(0, 79, 144)
-    section_titles: rgb(0, 79, 144)
-    links: rgb(0, 79, 144)
-    last_updated_date_and_page_numbering: rgb(128, 128, 128)
-  text:
-    font_family: Raleway
-    font_size: 8.8pt
-    leading: 0.6em
-    alignment: justified
-    date_and_location_column_alignment: right
-  links:
-    underline: false
-    use_external_link_icon: false
-  header:
-    name_font_family: Raleway
-    name_font_size: 30pt
-    name_bold: false
-    photo_width: 3.5cm
-    vertical_space_between_name_and_connections: 0.7cm
-    vertical_space_between_connections_and_first_section: 0.7cm
-    horizontal_space_between_connections: 0.5cm
-    connections_font_family: Raleway
-    separator_between_connections: ''
-    use_icons_for_connections: true
-    alignment: left
-  section_titles:
-    font_family: Raleway
-    font_size: 1.4em
-    bold: false
-    small_caps: false
-    line_thickness: 0.5pt
-    vertical_space_above: 0.5cm
-    vertical_space_below: 0.3cm
-  entries:
-    date_and_location_width: 4.15cm
-    left_and_right_margin: 0.2cm
-    horizontal_space_between_columns: 0.1cm
-    vertical_space_between_entries: 1.2em
-    allow_page_break_in_sections: true
-    allow_page_break_in_entries: true
-    short_second_row: false
-    show_time_spans_in: []
-  highlights:
-    bullet: •
-    top_margin: 0.25cm
-    left_margin: 0cm
-    vertical_space_between_highlights: 0.25cm
-    horizontal_space_between_bullet_and_highlight: 0.5em
-    summary_left_margin: 0cm
-  entry_types:
-    one_line_entry:
-      template: '**LABEL:** DETAILS'
-    education_entry:
-      main_column_first_row_template: '**INSTITUTION**, AREA -- LOCATION'
-      degree_column_template: '**DEGREE**'
-      degree_column_width: 1cm
-      main_column_second_row_template: |-
-        SUMMARY
-        HIGHLIGHTS
-      date_and_location_column_template: DATE
-    normal_entry:
-      main_column_first_row_template: '**NAME** -- **LOCATION**'
-      main_column_second_row_template: |-
-        SUMMARY
-        HIGHLIGHTS
-      date_and_location_column_template: DATE
-    experience_entry:
-      main_column_first_row_template: '**POSITION**, COMPANY -- LOCATION'
-      main_column_second_row_template: |-
-        SUMMARY
-        HIGHLIGHTS
-      date_and_location_column_template: DATE
-    publication_entry:
-      main_column_first_row_template: '**TITLE**'
-      main_column_second_row_template: |-
-        AUTHORS
-        URL (JOURNAL)
-      main_column_second_row_without_journal_template: |-
-        AUTHORS
-        URL
-      main_column_second_row_without_url_template: |-
-        AUTHORS
-        JOURNAL
-      date_and_location_column_template: DATE
-"""
-
-DEFAULT_LOCALE_YAML = """
-locale:
-  language: en
-  phone_number_format: international
-  page_numbering_template: NAME - Page PAGE_NUMBER of TOTAL_PAGES
-  last_updated_date_template: Last updated in TODAY
-  date_template: MONTH_ABBREVIATION YEAR
-  month: month
-  months: months
-  year: year
-  years: years
-  present: present
-  to: –
-  abbreviations_for_months:
-    - Jan
-    - Feb
-    - Mar
-    - Apr
-    - May
-    - June
-    - July
-    - Aug
-    - Sept
-    - Oct
-    - Nov
-    - Dec
-  full_names_of_months:
-    - January
-    - February
-    - March
-    - April
-    - May
-    - June
-    - July
-    - August
-    - September
-    - October
-    - November
-    - December
-rendercv_settings:
-  date: '2025-03-01'
-  bold_keywords: []
-"""
+# This is the root route.
+@app.route('/')
+def home():
+    return '<h1>CV Generator is running!</h1>'
 
 
 @app.route('/generate-cv', methods=['POST'])
@@ -218,7 +121,7 @@ def generate_cv():
 
             yaml_path_base = f"{full_name.replace(' ', '_')}_CV.yaml"
             yaml_path = os.path.join(temp_dir, yaml_path_base)
-            final_pdf_path = os.path.join(temp_dir, filename)
+            final_pdf_path = str(os.path.join(temp_dir, filename))
 
             # Overwrite the generated YAML file with the user's provided YAML string
             with open(yaml_path, "w", encoding='utf-8') as f:
@@ -253,7 +156,3 @@ def generate_cv():
         }), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=os.environ.get('PORT', 8080))

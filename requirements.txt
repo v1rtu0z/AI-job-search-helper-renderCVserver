@@ -1,3 +1,7 @@
 rendercv[full]
 flask
+flask_cors
 gunicorn
+protobuf
+google
+google-cloud-secret-manager
