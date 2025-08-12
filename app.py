@@ -8,36 +8,15 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from google.cloud import secretmanager
 
 # --- Configuration ---
 # Get the GCP project ID and secret name from environment variables.
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 API_KEY_SECRET = os.environ.get("API_KEY_SECRET")
 EXTENSION_SECRET_NAME = os.environ.get("EXTENSION_SECRET_NAME")
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")  # Secret for signing JWTs
-
-# Create the Secret Manager client
-secret_client = secretmanager.SecretManagerServiceClient()
-
-
-# --- Functions to retrieve secrets from Secret Manager ---
-def get_secret(secret_name):
-    """
-    Retrieves a secret from Google Secret Manager.
-    """
-    if not GCP_PROJECT_ID or not secret_name:
-        return None
-
-    try:
-        name = f"projects/{GCP_PROJECT_ID}/secrets/{secret_name}/versions/latest"
-        response = secret_client.access_secret_version(request={"name": name})
-        secret_value = response.payload.data.decode("UTF-8")
-        return secret_value
-    except Exception as e:
-        print(f"Failed to retrieve secret '{secret_name}': {str(e)}")
-        return None
-
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+API_KEY = os.environ.get("API_KEY_SECRET")
+EXTENSION_SECRET = os.environ.get("EXTENSION_SECRET_NAME")
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -48,10 +27,6 @@ limiter = Limiter(
     key_func=get_remote_address,  # Rate limit based on IP address
     app=app
 )
-
-# Cache the secrets so we don't call Secret Manager on every request
-API_KEY = get_secret(API_KEY_SECRET)
-EXTENSION_SECRET = get_secret(EXTENSION_SECRET_NAME)
 
 if not API_KEY or not EXTENSION_SECRET or not JWT_SECRET_KEY:
     print("WARNING: One or more critical secrets are missing. Server will not function securely.")
@@ -85,9 +60,6 @@ def authenticate():
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
         return jsonify({'token': token}), 200
     else:
-        # todo: remove me
-        print(f"Received client secret: {client_secret}")
-        print(f"Extension secret: {EXTENSION_SECRET}")
         return jsonify({'error': 'Invalid client secret'}), 401
 
 
