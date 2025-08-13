@@ -155,8 +155,8 @@ def generate_cv():
 
     except subprocess.CalledProcessError as e:
         return jsonify({
-            'error': 'An unexpected error occurred.',
-            'details': str(e)
+            'error': 'Command failed with exit status {}'.format(e.returncode),
+            'details\nSTDOUT:': e.stdout + '\nSTDERR:\n' + e.stderr
         }), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
