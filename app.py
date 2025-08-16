@@ -135,10 +135,11 @@ PROMPTS = {
         3. For "Overall Fit", provide a concise summary with a color-coded score. Use only the scores: 'very poor fit', 'poor fit', 'moderate fit', 'good fit', 'very good fit', 'questionable fit'.
         4. The "Overall Fit" summary should be formatted as a single line, for example: "**Overall Fit:** good fit".
         5. Color coding should be done with an HTML wrapping of the overall fit score, for example: "<span style='color: green'>good fit</span>".
-        6. Ensure all Markdown syntax is correct for headings, lists, and bold text.
-        7. The output should start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
-        8. The analysis should take into consideration any missing or misaligned elements in the job description like location, remote work policy, industry, position, seniority, salary range, etc.
-        9.  Start/end dates "in the future" are okay, your training end date was probably years ago
+        6. Make sure that the "Overall Fit" also contains an actual summary of why it's a good fit, not just the "score".
+        7. Ensure all Markdown syntax is correct for headings, lists, and bold text.
+        8. The output should start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
+        9. The analysis should take into consideration any missing or misaligned elements in the job description like location, remote work policy, industry, position, seniority, salary range, etc.
+        10.  Start/end dates "in the future" are okay, your training end date was probably years ago
     """,
     "COVER_LETTER": lambda job_posting_text, resume_json_data: f"""
         You are a professional career assistant. Your task is to generate a cover letter that will
