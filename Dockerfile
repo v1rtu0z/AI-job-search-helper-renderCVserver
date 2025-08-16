@@ -19,8 +19,11 @@ COPY app.py .
 # This assumes you have a requirements.txt file in your project
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Prevent Python from buffering stdout and stderr
+ENV PYTHONUNBUFFERED=1
+
 # Expose the port that your application will run on
 EXPOSE 8080
 
 # Run your application
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

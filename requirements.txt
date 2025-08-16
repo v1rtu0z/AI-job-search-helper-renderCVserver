@@ -1,6 +1,10 @@
+werkzeug
 rendercv[full]
 flask
 flask_cors
 flask_limiter
 gunicorn
 PyJWT
+llama-index-core
+llama-index-llms-google-genai
+redis

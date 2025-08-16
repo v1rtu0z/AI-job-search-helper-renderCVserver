@@ -1,0 +1,123 @@
+{
+  "additionalDetails": "",
+  "certifications": [],
+  "education": [
+    {
+      "area": "Data science",
+      "degree": "MS",
+      "end_date": "present",
+      "highlights": [],
+      "institution": "Università degli Studi di Padova",
+      "location": "Padua, Italy",
+      "start_date": "Jan 2022",
+      "summary": null
+    },
+    {
+      "area": "IT",
+      "degree": "BS",
+      "end_date": "Jan 2020",
+      "highlights": [
+        "Key Projects: Engineered a LLVM compiler for Haskell using C++."
+      ],
+      "institution": "Faculty of Mathematics, University of Belgrade",
+      "location": "Belgrade, Serbia",
+      "start_date": "Jan 2015",
+      "summary": null
+    }
+  ],
+  "experience": [
+    {
+      "company": "Antara Health",
+      "end_date": "present",
+      "highlights": [
+        "Designed and optimized a PostgreSQL database and backend using Python/Django, enabling health outcome tracking for over 20,000 conditions.",
+        "Improved database infrastructure and backend queries, slashing average query delay to < 2ms (10x improvement), demonstrating a focus on performance.",
+        "Contributed to a pilot LLM chatbot project, gaining experience with Python-based services.",
+        "Developed a traditional ML model that automatically triaged 15,000 patients and reduced health screening meetings by ~70%."
+      ],
+      "location": "Nairobi",
+      "position": "Software Engineer",
+      "start_date": "May 2021",
+      "summary": null
+    },
+    {
+      "company": "RT-RK",
+      "end_date": "May 2021",
+      "highlights": [
+        "Key contributor to a CNN compilation toolchain (Python), demonstrating experience with complex, high-performance Python codebases.",
+        "Developed a multi-threaded process that increased network compilation by ~40% and sped up basic processes by ~20x.",
+        "Maintained automated systems on a Jenkins server, providing experience with CI/CD and build systems."
+      ],
+      "location": "Belgrade",
+      "position": "Software Engineer",
+      "start_date": "Sept 2018",
+      "summary": null
+    },
+    {
+      "company": "WEBCentric",
+      "end_date": "Aug 2018",
+      "highlights": [
+        "Automated release procedure using Bash, speeding up the process by 10x and gaining experience with tooling.",
+        "Optimized proxy iterations for web crawling, increasing speed by 20x.",
+        "Delivered 20+ crucial business datasets via optimized SQL queries, supporting key company decisions."
+      ],
+      "location": "Belgrade",
+      "position": "Software Engineer",
+      "start_date": "July 2017",
+      "summary": null
+    }
+  ],
+  "personal": {
+    "email": "nikolamandic1996@gmail.com",
+    "full_name": "Nikola Mandić",
+    "phone": "+39 389 892 3846",
+    "social_networks": [
+      {
+        "network": "LinkedIn",
+        "username": "Nikola-Mandić"
+      }
+    ],
+    "location": "Rome, Italy",
+    "website": null
+  },
+  "projects": [
+    {
+      "end_date": "present",
+      "highlights": [
+        "Developed a Chrome extension using TypeScript to analyze job descriptions and tailor resumes.",
+        "Utilized Retrieval-Augmented Generation (RAG) to provide a quick fit analysis and draft cover letters."
+      ],
+      "location": null,
+      "name": "AI job search helper (Chrome Extension)",
+      "start_date": "Aug 2025",
+      "summary": null
+    }
+  ],
+  "skills": [
+    {
+      "details": "Python, TypeScript, SQL, C++, Java, Bash",
+      "label": "Programming Languages"
+    },
+    {
+      "details": "Django, Spring, Pandas, numpy, sklearn, llamaindex",
+      "label": "Frameworks & Libraries"
+    },
+    {
+      "details": "Linux, AWS, GCP, Docker, CI/CD (Jenkins)",
+      "label": "Systems & Cloud"
+    },
+    {
+      "details": "PostgreSQL, SQL administration, MySQL, Redis",
+      "label": "Databases"
+    },
+    {
+      "details": "Git, SW development lifecycle, data analytics, OOP, RAG (Retrieval-Augmented Generation), LM studio",
+      "label": "Tools & Methodologies"
+    },
+    {
+      "details": "Italian (Limited working proficiency), English (Full professional proficiency), Serbian (Native)",
+      "label": "Natural Languages"
+    }
+  ],
+  "summary": "Software Engineer with 8 years of experience in building and optimizing scalable backend systems and open-source tooling. Proven track record of improving performance and efficiency, with a passion for writing well-designed, tested, and maintainable code. Proficient with Linux, containers (Docker), AWS, and experienced in a systems-level programming language (C++)."
+}
