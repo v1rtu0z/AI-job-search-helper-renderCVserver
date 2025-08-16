@@ -369,7 +369,6 @@ def tailor_resume_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
-    example_yaml_resume = data.get('example_yaml_resume')
     theme = data.get('theme', 'engineeringclassic')
     design_yaml_string = data.get('design_yaml_string')
     locale_yaml_string = data.get('locale_yaml_string')
@@ -379,7 +378,6 @@ def tailor_resume_endpoint():
     if not all([
         job_posting_text,
         resume_json_data,
-        example_yaml_resume,
         design_yaml_string,
         locale_yaml_string,
         filename
@@ -388,6 +386,8 @@ def tailor_resume_endpoint():
 
     try:
         llm = get_llm(user_api_key)
+        with open("example_resume.yaml", "r") as f:
+            example_yaml_resume = f.read()
         prompt = PROMPTS["YAML_CONVERSION"](job_posting_text, resume_json_data, example_yaml_resume)
         messages = [
             ChatMessage(
