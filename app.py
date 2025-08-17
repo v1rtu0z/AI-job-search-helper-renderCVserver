@@ -190,7 +190,7 @@ def home():
 
 
 @app.route('/authenticate', methods=['POST'])
-@limiter.limit("5 per minute", key_func=get_remote_address)  # Limit authentication attempts per IP for safety
+@limiter.limit("2 per minute", key_func=get_remote_address)  # Limit authentication attempts per IP for safety
 def authenticate():
     data = request.json
     if not data or 'client_secret' not in data:
@@ -215,7 +215,9 @@ def authenticate():
 # --- New AI Endpoints ---
 @app.route('/get-resume-json', methods=['POST'])
 @jwt_required
-@limiter.limit("10 per hour")
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
 def get_resume_json_endpoint():
     data = request.json
     resume_content = data.get('resume_content')
@@ -254,7 +256,9 @@ def get_resume_json_endpoint():
 
 @app.route('/generate-search-query', methods=['POST'])
 @jwt_required
-@limiter.limit("50 per day")
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
 def generate_search_query_endpoint():
     data = request.json
     resume_json_data = data.get('resume_json_data')
@@ -286,7 +290,9 @@ def generate_search_query_endpoint():
 
 @app.route('/analyze-job-posting', methods=['POST'])
 @jwt_required
-@limiter.limit("20 per day")
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
 def analyze_job_posting_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -331,7 +337,9 @@ def analyze_job_posting_endpoint():
 
 @app.route('/generate-cover-letter', methods=['POST'])
 @jwt_required
-@limiter.limit("15 per day")
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
 def generate_cover_letter_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -365,7 +373,9 @@ def generate_cover_letter_endpoint():
 
 @app.route('/tailor-resume', methods=['POST'])
 @jwt_required
-@limiter.limit("10 per day")
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
 def tailor_resume_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
