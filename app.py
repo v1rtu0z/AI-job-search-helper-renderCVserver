@@ -79,10 +79,9 @@ def get_llm(user_api_key: str | None = None, model_name: str | None = None):
 
 
 PROMPTS = {
-    # FIXME: Make the search query prompt always quote multi-word strings
     "RESUME_AND_SEARCH_QUERY": lambda resume_content: f"""
         Based on the following user data (resume and additional details), perform two tasks:
-        1. Generate a personalized LinkedIn search query using Boolean search operators, formatted as: ("job title 1" OR "job title 2") AND NOT ("skill 1" OR "skill 2" OR "job title 3").
+        1. Generate a personalized LinkedIn search query using Boolean search operators, formatted as: ("job title 1" OR "job title 2") AND NOT ("skill 1" OR "skill 2" OR "job title 3"). Note how multi-word strings are always quoted while single-word strings don't have to be.
         2. Extract the user's resume data into a structured JSON format.
 
         User data:
