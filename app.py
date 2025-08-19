@@ -23,6 +23,8 @@ REDIS_USER = os.environ.get("REDIS_USER")
 REDIS_HOST = os.environ.get("REDIS_HOST")
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
 
+# TODO: Make prompt a parameter
+
 # --- Flask App Initialization ---
 app = Flask(__name__)
 CORS(app)
@@ -64,19 +66,20 @@ def jwt_required(func):
 
 
 # --- LLM and Prompt Definitions ---
-def get_llm(user_api_key: str | None = None):
+def get_llm(user_api_key: str | None = None, model_name: str | None = None):
     # Use the user's key if provided, otherwise fallback to the developer's key
     api_key = user_api_key if user_api_key else GEMINI_API_KEY
     if not api_key:
         raise ValueError("No Gemini API key provided. Please provide one.")
 
     return GoogleGenAI(
-        model=MODEL_NAME,
+        model=model_name or MODEL_NAME,
         api_key=api_key,
     )
 
 
 PROMPTS = {
+    # FIXME: Make the search query prompt always quote multi-word strings
     "RESUME_AND_SEARCH_QUERY": lambda resume_content: f"""
         Based on the following user data (resume and additional details), perform two tasks:
         1. Generate a personalized LinkedIn search query using Boolean search operators, formatted as: ("job title 1" OR "job title 2") AND NOT ("skill 1" OR "skill 2" OR "job title 3").
@@ -223,11 +226,12 @@ def get_resume_json_endpoint():
     resume_content = data.get('resume_content')
     additional_details = data.get('additional_details')
     user_api_key = data.get('gemini_api_key')
+    model_name = data.get('model_name')
     if not resume_content:
         return jsonify({"error": "Missing 'resume_content'"}), 400
 
     try:
-        llm = get_llm(user_api_key)
+        llm = get_llm(user_api_key, model_name=model_name)
         messages = [
             ChatMessage(
                 role=MessageRole.SYSTEM,
@@ -263,11 +267,12 @@ def generate_search_query_endpoint():
     data = request.json
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
+    model_name = data.get('model_name')
     if not resume_json_data:
         return jsonify({"error": "Missing 'resume_json_data'"}), 400
 
     try:
-        llm = get_llm(user_api_key)
+        llm = get_llm(user_api_key, model_name=model_name)
         messages = [
             ChatMessage(
                 role=MessageRole.SYSTEM,
@@ -298,12 +303,13 @@ def analyze_job_posting_endpoint():
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
+    model_name = data.get('model_name')
 
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
     try:
-        llm = get_llm(user_api_key)
+        llm = get_llm(user_api_key, model_name=model_name)
         analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data)
         messages = [
             ChatMessage(
@@ -345,11 +351,12 @@ def generate_cover_letter_endpoint():
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
+    model_name = data.get('model_name')
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
     try:
-        llm = get_llm(user_api_key)
+        llm = get_llm(user_api_key, model_name=model_name)
         prompt = PROMPTS["COVER_LETTER"](job_posting_text, resume_json_data)
         messages = [
             ChatMessage(
@@ -385,6 +392,7 @@ def tailor_resume_endpoint():
     locale_yaml_string = data.get('locale_yaml_string')
     filename = data.get('filename')
     user_api_key = data.get('gemini_api_key')
+    model_name = data.get('model_name')
 
     if not all([
         job_posting_text,
@@ -396,7 +404,7 @@ def tailor_resume_endpoint():
         return jsonify({"error": "Missing one or more required fields"}), 400
 
     try:
-        llm = get_llm(user_api_key)
+        llm = get_llm(user_api_key, model_name=model_name)
         with open("example_resume.yaml", "r") as f:
             example_yaml_resume = f.read()
         prompt = PROMPTS["YAML_CONVERSION"](job_posting_text, resume_json_data, example_yaml_resume)
