@@ -181,6 +181,7 @@ PROMPTS = {
         7.  Start/end dates "in the future" are okay, your training end date was probably years ago
         8.  Start/end dates need to be in the format YYYY-MM.
         9.  Make sure that the YAML data correctly reflects the JSON data.
+        10. Yaml that you generate shouldn't contain strings in the format of <X or >X. For some reason this causes issues and should always be separated by a space, like < X or > X.
     """,
 }
 
@@ -402,6 +403,7 @@ def tailor_resume_endpoint():
     ]):
         return jsonify({"error": "Missing one or more required fields"}), 400
 
+    yaml_string = None
     try:
         llm = get_llm(user_api_key, model_name=model_name)
         with open("example_resume.yaml", "r") as f:
@@ -474,11 +476,15 @@ def tailor_resume_endpoint():
             return response
 
     except subprocess.CalledProcessError as e:
+        print("Problematic yaml input: ")
+        print(yaml_string)
         return jsonify({
             'error': 'Command failed with exit status {}'.format(e.returncode),
             'details': e.stdout + '\n' + e.stderr
         }), 500
     except Exception as e:
+        print("Problematic yaml input: ")
+        print(yaml_string)
         return jsonify({"error": str(e)}), 500
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing

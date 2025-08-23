@@ -18,6 +18,7 @@ COPY app.py .
 
 # Install any needed packages specified in requirements.txt
 # This assumes you have a requirements.txt file in your project
+# When debugging, it's usually faster if --no-cache-dir is removed
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Prevent Python from buffering stdout and stderr
