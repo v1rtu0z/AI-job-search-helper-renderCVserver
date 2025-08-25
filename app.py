@@ -419,6 +419,10 @@ def tailor_resume_endpoint():
         )
     ]
     last_error_details = None
+
+    resume_json_data = json.loads(resume_json_data)
+    full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
+
     yaml_string = None
 
     # Retry the entire process (LLM call + PDF generation) up to 3 times
@@ -439,9 +443,6 @@ def tailor_resume_endpoint():
 
                 with open(locale_yaml_path, "w", encoding='utf-8') as f:
                     f.write(locale_yaml_string)
-
-                resume_json_data = json.loads(resume_json_data)
-                full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
 
                 new_command = [
                     "rendercv", "new", full_name,
