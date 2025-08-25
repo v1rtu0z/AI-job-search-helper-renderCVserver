@@ -182,6 +182,7 @@ PROMPTS = {
         8.  Start/end dates need to be in the format YYYY-MM.
         9.  Make sure that the YAML data correctly reflects the JSON data.
         10. Yaml that you generate shouldn't contain strings in the format of <X or >X. For some reason this causes issues and should always be separated by a space, like < X or > X.
+        11. Do not include additional details in the yaml you generate. Only use those to guide the contents of the output yaml.
     """,
 }
 
@@ -224,7 +225,6 @@ def authenticate():
 def get_resume_json_endpoint():
     data = request.json
     resume_content = data.get('resume_content')
-    additional_details = data.get('additional_details')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
     if not resume_content:
@@ -249,10 +249,10 @@ def get_resume_json_endpoint():
 
         if llm_output.startswith('```json'):
             llm_output = llm_output.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-
-        parsed_data = eval(llm_output)
-        parsed_data["resume_data"]["additionalDetails"] = additional_details
-        return jsonify(parsed_data)
+        else:
+            raise ValueError('Response does not start with ```json```.')
+    
+        return llm_output
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
