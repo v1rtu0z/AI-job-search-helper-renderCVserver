@@ -183,6 +183,7 @@ PROMPTS = {
         9.  Make sure that the YAML data correctly reflects the JSON data.
         10. Yaml that you generate shouldn't contain strings in the format of <X or >X. For some reason this causes issues and should always be separated by a space, like < X or > X.
         11. Do not include additional details in the yaml you generate. Only use those to guide the contents of the output yaml.
+        12. The example yaml contains all of the options for the keys. Do not attempt to add any keys that are not in the example yaml but feel free to omit the unnecessary ones.
     """,
 }
 
@@ -403,89 +404,93 @@ def tailor_resume_endpoint():
     ]):
         return jsonify({"error": "Missing one or more required fields"}), 400
 
+    llm = get_llm(user_api_key, model_name=model_name)
+    with open("example_resume.yaml", "r") as f:
+        example_yaml_resume = f.read()
+    prompt = PROMPTS["YAML_CONVERSION"](job_posting_text, resume_json_data, example_yaml_resume)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* YAML resume, based on the job description.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=prompt,
+        )
+    ]
+    last_error_details = None
     yaml_string = None
-    try:
-        llm = get_llm(user_api_key, model_name=model_name)
-        with open("example_resume.yaml", "r") as f:
-            example_yaml_resume = f.read()
-        prompt = PROMPTS["YAML_CONVERSION"](job_posting_text, resume_json_data, example_yaml_resume)
-        messages = [
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* YAML resume, based on the job description.",
-            ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=prompt,
-            )
-        ]
-        response = llm.chat(messages)
-        yaml_string = response.message.content.strip()
 
-        if yaml_string.startswith('```yaml'):
-            yaml_string = yaml_string.split('```yaml', 1)[1].rsplit('```', 1)[0].strip()
+    # Retry the entire process (LLM call + PDF generation) up to 3 times
+    for attempt in range(3):
+        try:
+            response = llm.chat(messages)
+            yaml_string = response.message.content.strip()
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            design_yaml_path = os.path.join(temp_dir, "design.yaml")
-            locale_yaml_path = os.path.join(temp_dir, "locale.yaml")
+            if yaml_string.startswith('```yaml'):
+                yaml_string = yaml_string.split('```yaml', 1)[1].rsplit('```', 1)[0].strip()
 
-            with open(design_yaml_path, "w", encoding='utf-8') as f:
-                f.write(design_yaml_string)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                design_yaml_path = os.path.join(temp_dir, "design.yaml")
+                locale_yaml_path = os.path.join(temp_dir, "locale.yaml")
 
-            with open(locale_yaml_path, "w", encoding='utf-8') as f:
-                f.write(locale_yaml_string)
+                with open(design_yaml_path, "w", encoding='utf-8') as f:
+                    f.write(design_yaml_string)
 
-            resume_json_data = json.loads(resume_json_data)
+                with open(locale_yaml_path, "w", encoding='utf-8') as f:
+                    f.write(locale_yaml_string)
 
-            full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
+                resume_json_data = json.loads(resume_json_data)
+                full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
 
-            new_command = [
-                "rendercv", "new", full_name,
-                "--theme", theme,
-                "--dont-create-theme-source-files",
-                "--dont-create-markdown-source-files"
-            ]
-            subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                new_command = [
+                    "rendercv", "new", full_name,
+                    "--theme", theme,
+                    "--dont-create-theme-source-files",
+                    "--dont-create-markdown-source-files"
+                ]
+                subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-            yaml_path_base = f"{full_name.replace(' ', '_')}_CV.yaml"
-            yaml_path = os.path.join(temp_dir, yaml_path_base)
-            final_pdf_path = str(os.path.join(temp_dir, filename))
+                yaml_path_base = f"{full_name}_CV.yaml"
+                yaml_path = os.path.join(temp_dir, yaml_path_base)
+                final_pdf_path = str(os.path.join(temp_dir, filename))
 
-            with open(yaml_path, "w", encoding='utf-8') as f:
-                f.write(yaml_string)
+                with open(yaml_path, "w", encoding='utf-8') as f:
+                    f.write(yaml_string)
 
-            render_command = [
-                "rendercv", "render", yaml_path_base,
-                "--design", design_yaml_path,
-                "--locale-catalog", locale_yaml_path,
-                "--pdf-path", final_pdf_path,
-                "--dont-generate-markdown",
-                "--dont-generate-html",
-                "--dont-generate-png"
-            ]
-            subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                render_command = [
+                    "rendercv", "render", yaml_path_base,
+                    "--design", design_yaml_path,
+                    "--locale-catalog", locale_yaml_path,
+                    "--pdf-path", final_pdf_path,
+                    "--dont-generate-markdown",
+                    "--dont-generate-html",
+                    "--dont-generate-png"
+                ]
+                subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-            if not os.path.exists(final_pdf_path):
-                return jsonify({"error": "Failed to generate PDF."}), 500
+                if os.path.exists(final_pdf_path):
+                    # Success! Return the file and exit the function
+                    return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
+                                     download_name=filename)
+                else:
+                    # Subprocess succeeded but PDF is missing
+                    raise Exception("Failed to generate PDF file despite successful command execution.")
 
-            response = send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True, download_name=filename)
+        except (subprocess.CalledProcessError, Exception) as e:
+            # Capture the error details, then the loop will try again
+            print(f"Attempt {attempt + 1} failed. Problematic YAML:")
+            print(yaml_string)
+            if isinstance(e, subprocess.CalledProcessError):
+                last_error_details = {
+                    'error': f"Command failed with exit status {e.returncode}",
+                    'details': e.stdout + '\n' + e.stderr
+                }
+            else:
+                last_error_details = {"error": str(e)}
 
-            subprocess.run(['rm', '-rf', 'rendercv_output', './*.yaml', './*.pdf'],
-                           capture_output=True, text=True, cwd=temp_dir)
-
-            return response
-
-    except subprocess.CalledProcessError as e:
-        print("Problematic yaml input: ")
-        print(yaml_string)
-        return jsonify({
-            'error': 'Command failed with exit status {}'.format(e.returncode),
-            'details': e.stdout + '\n' + e.stderr
-        }), 500
-    except Exception as e:
-        print("Problematic yaml input: ")
-        print(yaml_string)
-        return jsonify({"error": str(e)}), 500
+    # If the loop completes without a successful return, all attempts failed
+    return jsonify(last_error_details), 500
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
 # if __name__ == "__main__": 
