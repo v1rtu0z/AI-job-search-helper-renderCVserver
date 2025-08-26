@@ -2,10 +2,12 @@ import datetime
 import functools
 import json
 import os
+import re
 import subprocess
 import tempfile
 
 import jwt
+import yaml
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -157,36 +159,112 @@ PROMPTS = {
         Note that the job description might not be in English and shouldn't be dismissed in that case!
         Always write the cover letter in the same language as the job description.
     """,
-    "YAML_CONVERSION": lambda job_posting_text, resume_json_data, example_yaml_resume: f"""
-        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to convert the JSON resume data into a tailored YAML resume, based on the job description.
+    "JSON_CONVERSION": lambda job_posting_text, resume_json_data: f"""
+    The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to convert the JSON resume data into a tailored JSON resume, based on the job description.
 
-        Input Data:
-        Job Description:
-        {job_posting_text}
-        Resume data JSON:
-        {resume_json_data}
-        Example YAML context:
-        {example_yaml_resume}
-        
-        Instructions:
-        - Follow the exact YAML structure from the example YAML context.
-        - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
-        - Maintain professional formatting and proper YAML syntax.
-        - Do NOT add any placeholders.
-        - Remember that highlights must be simple strings wrapped in quotation marks! They can't have a title, name or start with something like key: ...!.
-        - Remember that the 'section' is a part of 'cv', ergo it needs to be indented inside of it and not on the same level.
-        - Start/end dates need to be in the format YYYY-MM.
-        - The YAML you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
-        - Do not include additional details in the YAML you generate. Only use those to guide the contents of the output YAML.
-        - The example YAML contains all of the options for the keys. Do not attempt to add any keys that are not in the example YAML but feel free to omit the unnecessary ones.
-        - Make sure to use the same keys as in the example YAML. For example a project entry needs a name. A title or label won't be accepted as keys.
-        - Pay attention not to confuse the user's location (present in the resume data JSON) and the job's location (present in the job description).
-        - Do not use the literal block scalar ```key: |``` syntax. Instead, use a list of strings for multiline content, for example:
-        
-        key:
-        - "Some text for the first point."
-        - "Some text for the second point."
-    """,
+    Input Data:
+    Job Description:
+    {job_posting_text}
+    Resume data JSON:
+    {resume_json_data}
+    
+    Instructions:
+    - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
+    - Output ONLY valid JSON in the exact structure shown below.
+    - Do NOT add any placeholders or example data.
+    - The JSON you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
+    - Start/end dates need to be in the format YYYY-MM.
+    - Do not include additional details. Only use the input data to populate the output JSON.
+    - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
+    - Pay attention not to confuse the user's location and the job's location.
+
+    Required JSON Structure:
+    {{
+        "cv": {{
+            "name": "Full Name",
+            "location": "City, State/Country",
+            "email": "email@example.com",
+            "phone": "phone number",
+            "website": "website url",
+            "social_networks": [
+                {{
+                    "network": "LinkedIn",
+                    "username": "username"
+                }},
+                {{
+                    "network": "GitHub", 
+                    "username": "username"
+                }}
+            ],
+            "sections": {{
+                "education": [
+                    {{
+                        "institution": "University Name",
+                        "area": "Field of Study",
+                        "degree": "Degree Type (BSc, MSc, etc.)",
+                        "start_date": "YYYY-MM",
+                        "end_date": "YYYY-MM or present",
+                        "location": "City, State/Country",
+                        "highlights": [
+                            "Achievement or detail 1",
+                            "Achievement or detail 2"
+                        ]
+                    }}
+                ],
+                "experience": [
+                    {{
+                        "company": "Company Name",
+                        "position": "Job Title",
+                        "start_date": "YYYY-MM",
+                        "end_date": "YYYY-MM or present", 
+                        "location": "City, State/Country",
+                        "highlights": [
+                            "Accomplishment 1",
+                            "Accomplishment 2"
+                        ]
+                    }}
+                ],
+                "projects": [
+                    {{
+                        "name": "Project Name",
+                        "start_date": "YYYY-MM",
+                        "end_date": "YYYY-MM or present",
+                        "summary": "Brief project description",
+                        "highlights": [
+                            "Key feature or achievement 1",
+                            "Key feature or achievement 2"
+                        ]
+                    }}
+                ],
+                "skills": [
+                    {{
+                        "label": "Skill Category",
+                        "details": "Specific skills and proficiency levels"
+                    }}
+                ],
+                "publications": [
+                    {{
+                        "title": "Publication Title",
+                        "authors": ["Author 1", "Author 2"],
+                        "doi": "DOI number",
+                        "url": "publication url",
+                        "journal": "Journal name",
+                        "date": "YYYY-MM"
+                    }}
+                ],
+                "certifications": [
+                    {{
+                        "name": "Certification Name",
+                        "institution": "Issuing Organization",
+                        "date": "YYYY-MM",
+                        "expiry_date": "YYYY-MM or empty string if no expiry",
+                        "url": "credential url or empty string"
+                    }}
+                ]
+            }}
+        }}
+    }}
+""",
 }
 
 
@@ -426,7 +504,7 @@ def tailor_resume_endpoint():
     llm = get_llm(user_api_key, model_name=model_name)
     with open("example_resume.yaml", "r") as f:
         example_yaml_resume = f.read()
-    prompt = PROMPTS["YAML_CONVERSION"](job_posting_text, resume_json_data, example_yaml_resume)
+    prompt = PROMPTS["JSON_CONVERSION"](job_posting_text, resume_json_data)
     messages = [
         ChatMessage(
             role=MessageRole.SYSTEM,
@@ -461,45 +539,58 @@ def tailor_resume_endpoint():
         for attempt in range(3):
             try:
                 response = llm.chat(messages)
-                yaml_string = response.message.content.strip()
+                json_string = response.message.content.strip()
 
-                if yaml_string.startswith('```yaml'):
-                    yaml_string = yaml_string.split('```yaml', 1)[1].rsplit('```', 1)[0].strip()
+                if json_string.startswith('```json'):
+                    json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
+                elif json_string.startswith('```'):
+                    json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
 
-                    with open(yaml_path, "r", encoding='utf-8') as f:
-                        existing_content = f.read()
+                try:
+                    json_data = json.loads(json_string)
 
-                    try:
-                        split_index = existing_content.index('design:')
-                        end_of_file_content = existing_content[split_index:].strip()
-                    except ValueError:
-                        end_of_file_content = ''
+                    yaml_string = yaml.dump(json_data, default_flow_style=False, allow_unicode=True, sort_keys=False,
+                                            default_style='"')
 
-                    combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
+                    yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing JSON: {e}")
+                    print(f"Raw response: {json_string}")
+                    raise
 
-                    with open(yaml_path, "w", encoding='utf-8') as f:
-                        f.write(combined_yaml.strip())
+                with open(yaml_path, "r") as f:
+                    existing_content = f.read()
 
-                    # we log the yaml_path contents
-                    with open(yaml_path, "r", encoding='utf-8') as f:
-                        print(f"Contents of {yaml_path}:")
-                        yaml_file_contents = f.read()
-                        print(yaml_file_contents)
+                try:
+                    split_index = existing_content.index('design:')
+                    end_of_file_content = existing_content[split_index:].strip()
+                except ValueError:
+                    end_of_file_content = ''
 
-                    render_command = [
-                        "rendercv", "render", yaml_path_base,
-                        "--pdf-path", final_pdf_path,
-                        "--design.page.show_last_updated_date", "false",
-                        "--locale.phone_number_format", "international"
-                    ]
-                    print(f"Running command: {render_command}")
-                    subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
 
-                    if os.path.exists(final_pdf_path):
-                        return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
-                                         download_name=filename)
-                    else:
-                        raise Exception("Failed to generate PDF file despite successful command execution.")
+                with open(yaml_path, "w") as f:
+                    f.write(combined_yaml.strip())
+
+                with open(yaml_path, "r") as f:
+                    print(f"Contents of {yaml_path}:")
+                    yaml_file_contents = f.read()
+                    print(yaml_file_contents)
+
+                render_command = [
+                    "rendercv", "render", yaml_path_base,
+                    "--pdf-path", final_pdf_path,
+                    "--design.page.show_last_updated_date", "false",
+                    "--locale.phone_number_format", "international"
+                ]
+                print(f"Running command: {render_command}")
+                subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+                if os.path.exists(final_pdf_path):
+                    return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
+                                     download_name=filename)
+                else:
+                    raise Exception("Failed to generate PDF file despite successful command execution.")
 
             except (subprocess.CalledProcessError, Exception) as e:
                 print(f"Attempt {attempt + 1} failed. Problematic YAML:")
