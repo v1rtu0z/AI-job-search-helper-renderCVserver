@@ -3,8 +3,15 @@ version: '3.8'
 services:
   app:
     build: .
+    # This mounts your current directory into the container's /app directory.
+    # The development server inside the container will now see any changes you make locally.
+    volumes:
+      - .:/app
     ports:
       - "8080:8080"
     env_file:
       - ./.env
     container_name: rendercv-server
+    # Use a development command for local development
+    # Assuming your app.py contains a Flask app named 'app'
+    command: python app.py

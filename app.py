@@ -121,30 +121,27 @@ PROMPTS = {
 
         Return only the search query string and nothing else.
     """,
-    "JOB_ANALYSIS": lambda job_posting_text, resume_json_data: f"""
-        You are a professional career assistant. Your task is to provide a job analysis in a structured Markdown document.
-        You should compare the users resume JSON data, available in the index, against the job description.
-        The resume JSON data includes 'additionalDetails' field you should pay attention to.
+    "JOB_ANALYSIS": lambda job_posting_text, resume_json_data, job_analysis_format: f"""
+        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to provide a comprehensive job analysis in a structured HTML document, strictly adhering to the format outlined in the provided 'Job Analysis Format' file.
 
         **Input Data:**
-        Job Description: {job_posting_text}
+        Job Description:
+        {job_posting_text}
         **Resume data JSON:**
         {resume_json_data}
-
+        **Job Analysis Format:**
+        {job_analysis_format}
+        
         **Instructions:**
-        1. Format the analysis into a brief and professional Markdown document.
-        2. The document must have the following sections: "Strengths", "Areas for Improvement" and "Overall Fit".
-        3. For "Overall Fit", provide a concise summary with a color-coded score. Use only the scores: 'very poor fit', 'poor fit', 'moderate fit', 'good fit', 'very good fit', 'questionable fit'.
-        4. The "Overall Fit" summary should be formatted as a single line, for example: "**Overall Fit:** good fit".
-        5. Color coding should be done with an HTML wrapping of the overall fit score, for example: "<span style='color: green'>good fit</span>".
-        6. Make sure that the "Overall Fit" also contains an actual summary of why it's a good fit, not just the "score".
-        7. Ensure all Markdown syntax is correct for headings, lists, and bold text.
-        8. The output should start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
-        9. The analysis should take into consideration any missing or misaligned elements in the job description like location, remote work policy, industry, position, seniority, salary range, etc.
-        10.  Start/end dates "in the future" are okay, your training end date was probably years ago
+        - Compare the user's resume JSON data (including the 'additionalDetails' field) against the job description.
+        - The analysis should take into consideration any missing or misaligned elements from the job description like location, remote work policy, industry, position, seniority, salary range, etc.
+        - The output must start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
+        - Replace strength name placeholders with actual sensible data. Same for ares for improvement
+        - Make sure that the titles are larger that list items and that you're not repeating yourself
+        - Change only the text values in the HTML format, leave everything else as it is.
     """,
     "COVER_LETTER": lambda job_posting_text, resume_json_data: f"""
-        You are a professional career assistant. Your task is to generate a cover letter that will
+        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to generate a cover letter that will
         help the user apply for the job based on the job description, and the users resume data (JSON) provided.
         The resume JSON data includes 'additionalDetails' field you should pay attention to.
 
@@ -161,29 +158,34 @@ PROMPTS = {
         Always write the cover letter in the same language as the job description.
     """,
     "YAML_CONVERSION": lambda job_posting_text, resume_json_data, example_yaml_resume: f"""
-        You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored*
-         YAML resume, based on the job description.
+        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to convert the JSON resume data into a tailored YAML resume, based on the job description.
 
-        **Input Data:**
-        Job Description: {job_posting_text}
-        **Resume data JSON:**
+        Input Data:
+        Job Description:
+        {job_posting_text}
+        Resume data JSON:
         {resume_json_data}
-        **Example YAML context:**
+        Example YAML context:
         {example_yaml_resume}
-
-        **Instructions:**
-        1.  Follow the exact YAML structure from the example YAML context.
-        2.  Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
-        3.  Maintain professional formatting and proper YAML syntax.
-        4.  Do NOT add any placeholders.
-        5.  Remember that *highlights must be simple strings wrapped in quotation marks!* They *can't* have a title, name or start with something like key: ...!
-        6.  Remember that the 'section' is a part of 'cv', ergo it needs to be indented inside of it and *not* on the same level
-        7.  Start/end dates "in the future" are okay, your training end date was probably years ago
-        8.  Start/end dates need to be in the format YYYY-MM.
-        9.  Make sure that the YAML data correctly reflects the JSON data.
-        10. Yaml that you generate shouldn't contain strings in the format of <X or >X. For some reason this causes issues and should always be separated by a space, like < X or > X.
-        11. Do not include additional details in the yaml you generate. Only use those to guide the contents of the output yaml.
-        12. The example yaml contains all of the options for the keys. Do not attempt to add any keys that are not in the example yaml but feel free to omit the unnecessary ones.
+        
+        Instructions:
+        - Follow the exact YAML structure from the example YAML context.
+        - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
+        - Maintain professional formatting and proper YAML syntax.
+        - Do NOT add any placeholders.
+        - Remember that highlights must be simple strings wrapped in quotation marks! They can't have a title, name or start with something like key: ...!.
+        - Remember that the 'section' is a part of 'cv', ergo it needs to be indented inside of it and not on the same level.
+        - Start/end dates need to be in the format YYYY-MM.
+        - The YAML you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
+        - Do not include additional details in the YAML you generate. Only use those to guide the contents of the output YAML.
+        - The example YAML contains all of the options for the keys. Do not attempt to add any keys that are not in the example YAML but feel free to omit the unnecessary ones.
+        - Make sure to use the same keys as in the example YAML. For example a project entry needs a name. A title or label won't be accepted as keys.
+        - Pay attention not to confuse the user's location (present in the resume data JSON) and the job's location (present in the job description).
+        - Do not use the literal block scalar ```key: |``` syntax. Instead, use a list of strings for multiline content, for example:
+        
+        key:
+        - "Some text for the first point."
+        - "Some text for the second point."
     """,
 }
 
@@ -252,7 +254,7 @@ def get_resume_json_endpoint():
             llm_output = llm_output.split('```json', 1)[1].rsplit('```', 1)[0].strip()
         else:
             raise ValueError('Response does not start with ```json```.')
-    
+
         return llm_output
 
     except Exception as e:
@@ -309,9 +311,12 @@ def analyze_job_posting_endpoint():
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
+    with open("job_analysis_format.html", "r") as f:
+        job_analysis_format = f.read()
+
     try:
         llm = get_llm(user_api_key, model_name=model_name)
-        analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data)
+        analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data, job_analysis_format)
         messages = [
             ChatMessage(
                 role=MessageRole.SYSTEM,
@@ -324,13 +329,31 @@ def analyze_job_posting_endpoint():
         ]
         response = llm.chat(messages)
         llm_output = response.message.content.strip()
-        lines = llm_output.split('\n')
+        print("Raw LLM Output:")
+        print(llm_output)
+
+        # Remove the code block wrapper
+        cleaned_output = llm_output.strip().removeprefix('```html').removesuffix('```').strip()
+        print("\nCleaned LLM Output:")
+        print(cleaned_output)
+
+        # Split the cleaned output into lines
+        lines = cleaned_output.split('\n', 1)
+
+        # The job ID is now the first line of the cleaned output
         job_id = lines[0].strip()
+
+        # Handle the optional markdown heading (#)
+        if job_id.startswith('#'):
+            job_id = job_id[1:].strip()
+
         if '@' not in job_id:
             raise ValueError('Job analysis does not start with [job title] @ [company name].')
 
         company_name = job_id.split(' @ ')[-1]
-        job_analysis = (llm_output.split('\n', 1)[1] or '').strip()
+
+        # The rest of the content is the job analysis
+        job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
 
         return jsonify({
             "job_id": job_id,
@@ -389,8 +412,6 @@ def tailor_resume_endpoint():
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
     theme = data.get('theme', 'engineeringclassic')
-    design_yaml_string = data.get('design_yaml_string')
-    locale_yaml_string = data.get('locale_yaml_string')
     filename = data.get('filename')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
@@ -398,8 +419,6 @@ def tailor_resume_endpoint():
     if not all([
         job_posting_text,
         resume_json_data,
-        design_yaml_string,
-        locale_yaml_string,
         filename
     ]):
         return jsonify({"error": "Missing one or more required fields"}), 400
@@ -424,74 +443,77 @@ def tailor_resume_endpoint():
     full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
 
     yaml_string = None
+    yaml_file_contents = None
 
     # Retry the entire process (LLM call + PDF generation) up to 3 times
-    for attempt in range(3):
-        try:
-            response = llm.chat(messages)
-            yaml_string = response.message.content.strip()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        new_command = [
+            "rendercv", "new", full_name,
+            "--theme", theme
+        ]
+        print(f"Running command: {new_command}")
+        subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-            if yaml_string.startswith('```yaml'):
-                yaml_string = yaml_string.split('```yaml', 1)[1].rsplit('```', 1)[0].strip()
+        yaml_path_base = f"{full_name}_CV.yaml"
+        yaml_path = os.path.join(temp_dir, yaml_path_base)
+        final_pdf_path = str(os.path.join(temp_dir, filename))
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                design_yaml_path = os.path.join(temp_dir, "design.yaml")
-                locale_yaml_path = os.path.join(temp_dir, "locale.yaml")
+        for attempt in range(3):
+            try:
+                response = llm.chat(messages)
+                yaml_string = response.message.content.strip()
 
-                with open(design_yaml_path, "w", encoding='utf-8') as f:
-                    f.write(design_yaml_string)
+                if yaml_string.startswith('```yaml'):
+                    yaml_string = yaml_string.split('```yaml', 1)[1].rsplit('```', 1)[0].strip()
 
-                with open(locale_yaml_path, "w", encoding='utf-8') as f:
-                    f.write(locale_yaml_string)
+                    with open(yaml_path, "r", encoding='utf-8') as f:
+                        existing_content = f.read()
 
-                new_command = [
-                    "rendercv", "new", full_name,
-                    "--theme", theme,
-                    "--dont-create-theme-source-files",
-                    "--dont-create-markdown-source-files"
-                ]
-                subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                    try:
+                        split_index = existing_content.index('design:')
+                        end_of_file_content = existing_content[split_index:].strip()
+                    except ValueError:
+                        end_of_file_content = ''
 
-                yaml_path_base = f"{full_name}_CV.yaml"
-                yaml_path = os.path.join(temp_dir, yaml_path_base)
-                final_pdf_path = str(os.path.join(temp_dir, filename))
+                    combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
 
-                with open(yaml_path, "w", encoding='utf-8') as f:
-                    f.write(yaml_string)
+                    with open(yaml_path, "w", encoding='utf-8') as f:
+                        f.write(combined_yaml.strip())
 
-                render_command = [
-                    "rendercv", "render", yaml_path_base,
-                    "--design", design_yaml_path,
-                    "--locale-catalog", locale_yaml_path,
-                    "--pdf-path", final_pdf_path,
-                    "--dont-generate-markdown",
-                    "--dont-generate-html",
-                    "--dont-generate-png"
-                ]
-                subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                    # we log the yaml_path contents
+                    with open(yaml_path, "r", encoding='utf-8') as f:
+                        print(f"Contents of {yaml_path}:")
+                        yaml_file_contents = f.read()
+                        print(yaml_file_contents)
 
-                if os.path.exists(final_pdf_path):
-                    # Success! Return the file and exit the function
-                    return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
-                                     download_name=filename)
+                    render_command = [
+                        "rendercv", "render", yaml_path_base,
+                        "--pdf-path", final_pdf_path,
+                        "--design.page.show_last_updated_date", "false",
+                        "--locale.phone_number_format", "international"
+                    ]
+                    print(f"Running command: {render_command}")
+                    subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+                    if os.path.exists(final_pdf_path):
+                        return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
+                                         download_name=filename)
+                    else:
+                        raise Exception("Failed to generate PDF file despite successful command execution.")
+
+            except (subprocess.CalledProcessError, Exception) as e:
+                print(f"Attempt {attempt + 1} failed. Problematic YAML:")
+                print(yaml_file_contents)
+                if isinstance(e, subprocess.CalledProcessError):
+                    last_error_details = {
+                        'error': f"Command failed with exit status {e.returncode}",
+                        'details': e.stdout + '\n' + e.stderr
+                    }
                 else:
-                    # Subprocess succeeded but PDF is missing
-                    raise Exception("Failed to generate PDF file despite successful command execution.")
+                    last_error_details = {"error": str(e)}
 
-        except (subprocess.CalledProcessError, Exception) as e:
-            # Capture the error details, then the loop will try again
-            print(f"Attempt {attempt + 1} failed. Problematic YAML:")
-            print(yaml_string)
-            if isinstance(e, subprocess.CalledProcessError):
-                last_error_details = {
-                    'error': f"Command failed with exit status {e.returncode}",
-                    'details': e.stdout + '\n' + e.stderr
-                }
-            else:
-                last_error_details = {"error": str(e)}
-
-    # If the loop completes without a successful return, all attempts failed
     return jsonify(last_error_details), 500
+
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
 # if __name__ == "__main__": 
@@ -508,3 +530,9 @@ def tailor_resume_endpoint():
 # 
 #     # Run the tests
 #     run_tests()
+
+if __name__ == '__main__':
+    # This will run a development server that hot-reloads on file changes.
+    # It will only run when you execute `python app.py`
+    # Gunicorn will not execute this part of the code
+    app.run(host='0.0.0.0', port=8080, debug=True)
