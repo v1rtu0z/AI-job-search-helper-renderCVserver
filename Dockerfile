@@ -13,7 +13,6 @@ RUN apt-get update && \
 
 # Copy the application files into the container
 COPY requirements.txt .
-COPY example_resume.yaml .
 COPY job_analysis_format.html .
 COPY app.py .
 

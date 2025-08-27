@@ -15,17 +15,17 @@ from flask_limiter.util import get_remote_address
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.llms.google_genai import GoogleGenAI
 from werkzeug.exceptions import Unauthorized
+import requests
+
+from prompts import PROMPTS
 
 # --- Configuration ---
 EXTENSION_SECRET = os.environ.get('EXTENSION_SECRET')
-MODEL_NAME = os.environ.get("MODEL_NAME")
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 REDIS_USER = os.environ.get("REDIS_USER")
 REDIS_HOST = os.environ.get("REDIS_HOST")
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
-
-# TODO: Make prompt a parameter
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -75,198 +75,32 @@ def get_llm(user_api_key: str | None = None, model_name: str | None = None):
         raise ValueError("No Gemini API key provided. Please provide one.")
 
     return GoogleGenAI(
-        model=model_name or MODEL_NAME,
+        model=model_name,
         api_key=api_key,
     )
 
 
-PROMPTS = {
-    "RESUME_AND_SEARCH_QUERY": lambda resume_content: f"""
-        Based on the following user data (resume and additional details), perform two tasks:
-        1. Generate a personalized LinkedIn search query using Boolean search operators, formatted as: ("job title 1" OR "job title 2") AND NOT ("skill 1" OR "skill 2" OR "job title 3"). Note how multi-word strings are always quoted while single-word strings don't have to be.
-        2. Extract the user's resume data into a structured JSON format.
+def handle_llm_errors(func):
+    """Decorator to handle LLM errors and return appropriate HTTP responses"""
 
-        User data:
-        Resume: {resume_content}
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                return jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            return jsonify({"error": str(e)}), 500
 
-        Provide the output as a single JSON object with two keys: "search_query" and "resume_data".
-        The "resume_data" value should be a JSON object representing the user's resume.
-        **Output Format:**
-        {{
-          "search_query": "...",
-          "resume_data": {{
-              "personal": {{
-                "full_name": "...",
-                "email": "...",
-                "phone": "...",
-                "website": "..."
-                "social_networks": [...]
-                "location": "..."
-                ...
-              }},
-              "summary": "...",
-              "education": [...],
-              "experience": [...],
-              "projects": [...],
-              "skills": [...],
-              "certifications": [...],
-              ...
-          }}
-        }}
-    """,
-    "SEARCH_QUERY_ONLY": lambda resume_json_data: f"""
-        Based on the user's structured resume data (JSON) provided, generate a personalized LinkedIn search query.
-        The query should use Boolean search operators and be in the format: ("job title 1" OR "job title 2") AND NOT ("skill 1" OR "skill 2" OR "job title 3").
-
-        **Resume data JSON:**
-        {resume_json_data}
-
-        Return only the search query string and nothing else.
-    """,
-    "JOB_ANALYSIS": lambda job_posting_text, resume_json_data, job_analysis_format: f"""
-        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to provide a comprehensive job analysis in a structured HTML document, strictly adhering to the format outlined in the provided 'Job Analysis Format' file.
-
-        **Input Data:**
-        Job Description:
-        {job_posting_text}
-        **Resume data JSON:**
-        {resume_json_data}
-        **Job Analysis Format:**
-        {job_analysis_format}
-        
-        **Instructions:**
-        - Compare the user's resume JSON data (including the 'additionalDetails' field) against the job description.
-        - The analysis should take into consideration any missing or misaligned elements from the job description like location, remote work policy, industry, position, seniority, salary range, etc.
-        - The output must start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
-        - Replace strength name placeholders with actual sensible data. Same for ares for improvement
-        - Make sure that the titles are larger that list items and that you're not repeating yourself
-        - Change only the text values in the HTML format, leave everything else as it is.
-    """,
-    "COVER_LETTER": lambda job_posting_text, resume_json_data: f"""
-        The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to generate a cover letter that will
-        help the user apply for the job based on the job description, and the users resume data (JSON) provided.
-        The resume JSON data includes 'additionalDetails' field you should pay attention to.
-
-        **Job Description:**
-        {job_posting_text}
-        **Resume data JSON:**
-        {resume_json_data}
-
-        Some general guidelines: make it at most 3-4 paragraphs long, address their strengths and in
-        case that there are any missing skills, address those head on based on the users other skills
-        (ie stuff like quick learning, hard-working, commitment to excellence etc). Make sure to
-        reference the details from the job post as much as possible.
-        Note that the job description might not be in English and shouldn't be dismissed in that case!
-        Always write the cover letter in the same language as the job description.
-    """,
-    "JSON_CONVERSION": lambda job_posting_text, resume_json_data: f"""
-    The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to convert the JSON resume data into a tailored JSON resume, based on the job description.
-
-    Input Data:
-    Job Description:
-    {job_posting_text}
-    Resume data JSON:
-    {resume_json_data}
-    
-    Instructions:
-    - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
-    - Output ONLY valid JSON in the exact structure shown below.
-    - Do NOT add any placeholders or example data.
-    - The JSON you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
-    - Start/end dates need to be in the format YYYY-MM.
-    - Do not include additional details. Only use the input data to populate the output JSON.
-    - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
-    - Pay attention not to confuse the user's location and the job's location.
-    - *DO NOT* add any skills or experience to the output JSON that is not a part of the resume data JSON!
-
-    Required JSON Structure:
-    {{
-        "cv": {{
-            "name": "Full Name",
-            "location": "City, State/Country",
-            "email": "email@example.com",
-            "phone": "phone number",
-            "website": "website url",
-            "social_networks": [
-                {{
-                    "network": "LinkedIn",
-                    "username": "username"
-                }},
-                {{
-                    "network": "GitHub", 
-                    "username": "username"
-                }}
-            ],
-            "sections": {{
-                "education": [
-                    {{
-                        "institution": "University Name",
-                        "area": "Field of Study",
-                        "degree": "Degree Type (BSc, MSc, etc.)",
-                        "start_date": "YYYY-MM",
-                        "end_date": "YYYY-MM or present",
-                        "location": "City, State/Country",
-                        "highlights": [
-                            "Achievement or detail 1",
-                            "Achievement or detail 2"
-                        ]
-                    }}
-                ],
-                "experience": [
-                    {{
-                        "company": "Company Name",
-                        "position": "Job Title",
-                        "start_date": "YYYY-MM",
-                        "end_date": "YYYY-MM or present", 
-                        "location": "City, State/Country",
-                        "highlights": [
-                            "Accomplishment 1",
-                            "Accomplishment 2"
-                        ]
-                    }}
-                ],
-                "projects": [
-                    {{
-                        "name": "Project Name",
-                        "start_date": "YYYY-MM",
-                        "end_date": "YYYY-MM or present",
-                        "summary": "Brief project description",
-                        "highlights": [
-                            "Key feature or achievement 1",
-                            "Key feature or achievement 2"
-                        ]
-                    }}
-                ],
-                "skills": [
-                    {{
-                        "label": "Skill Category",
-                        "details": "Specific skills and proficiency levels"
-                    }}
-                ],
-                "publications": [
-                    {{
-                        "title": "Publication Title",
-                        "authors": ["Author 1", "Author 2"],
-                        "doi": "DOI number",
-                        "url": "publication url",
-                        "journal": "Journal name",
-                        "date": "YYYY-MM"
-                    }}
-                ],
-                "certifications": [
-                    {{
-                        "name": "Certification Name",
-                        "institution": "Issuing Organization",
-                        "date": "YYYY-MM",
-                        "expiry_date": "YYYY-MM or empty string if no expiry",
-                        "url": "credential url or empty string"
-                    }}
-                ]
-            }}
-        }}
-    }}
-""",
-}
+    return wrapper
 
 
 # --- Server Endpoints ---
@@ -304,6 +138,7 @@ def authenticate():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
+@handle_llm_errors
 def get_resume_json_endpoint():
     data = request.json
     resume_content = data.get('resume_content')
@@ -312,32 +147,28 @@ def get_resume_json_endpoint():
     if not resume_content:
         return jsonify({"error": "Missing 'resume_content'"}), 400
 
-    try:
-        llm = get_llm(user_api_key, model_name=model_name)
-        messages = [
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a professional career assistant. Your task is to provide a json formatted " +
-                        "resume data and an advanced linkedin search query based on the user's resume and additional " +
-                        "details.",
-            ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=PROMPTS["RESUME_AND_SEARCH_QUERY"](resume_content),
-            ),
-        ]
-        response = llm.chat(messages)
-        llm_output = response.message.content.strip()
+    llm = get_llm(user_api_key, model_name=model_name)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="You are a professional career assistant. Your task is to provide a json formatted " +
+                    "resume data and an advanced linkedin search query based on the user's resume and additional " +
+                    "details.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=PROMPTS["RESUME_AND_SEARCH_QUERY"](resume_content),
+        ),
+    ]
+    response = llm.chat(messages)
+    llm_output = response.message.content.strip()
 
-        if llm_output.startswith('```json'):
-            llm_output = llm_output.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-        else:
-            raise ValueError('Response does not start with ```json```.')
+    if llm_output.startswith('```json'):
+        llm_output = llm_output.split('```json', 1)[1].rsplit('```', 1)[0].strip()
+    else:
+        raise ValueError('Response does not start with ```json```.')
 
-        return llm_output
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return llm_output
 
 
 @app.route('/generate-search-query', methods=['POST'])
@@ -345,6 +176,7 @@ def get_resume_json_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
+@handle_llm_errors
 def generate_search_query_endpoint():
     data = request.json
     resume_json_data = data.get('resume_json_data')
@@ -353,26 +185,22 @@ def generate_search_query_endpoint():
     if not resume_json_data:
         return jsonify({"error": "Missing 'resume_json_data'"}), 400
 
-    try:
-        llm = get_llm(user_api_key, model_name=model_name)
-        messages = [
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a professional career assistant. Your task is to provide a json " +
-                        "formatted resume data and an advanced linkedin search query based on the user's " +
-                        "resume and additional details.",
-            ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=PROMPTS["SEARCH_QUERY_ONLY"](resume_json_data),
-            )
-        ]
-        response = llm.chat(messages)
-        search_query = response.message.content.strip()
-        return jsonify({"search_query": search_query})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    llm = get_llm(user_api_key, model_name=model_name)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="You are a professional career assistant. Your task is to provide a json " +
+                    "formatted resume data and an advanced linkedin search query based on the user's " +
+                    "resume and additional details.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=PROMPTS["SEARCH_QUERY_ONLY"](resume_json_data),
+        )
+    ]
+    response = llm.chat(messages)
+    search_query = response.message.content.strip()
+    return jsonify({"search_query": search_query})
 
 
 @app.route('/analyze-job-posting', methods=['POST'])
@@ -380,6 +208,7 @@ def generate_search_query_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
+@handle_llm_errors
 def analyze_job_posting_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -393,55 +222,47 @@ def analyze_job_posting_endpoint():
     with open("job_analysis_format.html", "r") as f:
         job_analysis_format = f.read()
 
-    try:
-        llm = get_llm(user_api_key, model_name=model_name)
-        analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data, job_analysis_format)
-        messages = [
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a professional career assistant. Your task is to provide a job analysis in a structured Markdown document.",
-            ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=analysis_prompt,
-            )
-        ]
-        response = llm.chat(messages)
-        llm_output = response.message.content.strip()
-        print("Raw LLM Output:")
-        print(llm_output)
+    llm = get_llm(user_api_key, model_name=model_name)
+    analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data, job_analysis_format)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="You are a professional career assistant. Your task is to provide a job analysis in a structured Markdown document.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=analysis_prompt,
+        )
+    ]
+    response = llm.chat(messages)
+    llm_output = response.message.content.strip()
+    print("Raw LLM Output:")
+    print(llm_output)
 
-        # Remove the code block wrapper
-        cleaned_output = llm_output.strip().removeprefix('```html').removesuffix('```').strip()
-        print("\nCleaned LLM Output:")
-        print(cleaned_output)
+    cleaned_output = llm_output.strip().removeprefix('```html').removesuffix('```').strip()
+    print("\nCleaned LLM Output:")
+    print(cleaned_output)
 
-        # Split the cleaned output into lines
-        lines = cleaned_output.split('\n', 1)
+    lines = cleaned_output.split('\n', 1)
 
-        # The job ID is now the first line of the cleaned output
-        job_id = lines[0].strip()
+    job_id = lines[0].strip()
 
-        # Handle the optional markdown heading (#)
-        if job_id.startswith('#'):
-            job_id = job_id[1:].strip()
+    if job_id.startswith('#'):
+        job_id = job_id[1:].strip()
 
-        if '@' not in job_id:
-            raise ValueError('Job analysis does not start with [job title] @ [company name].')
+    if '@' not in job_id:
+        raise ValueError('Job analysis does not start with [job title] @ [company name].')
 
-        company_name = job_id.split(' @ ')[-1]
+    company_name = job_id.split(' @ ')[-1]
 
-        # The rest of the content is the job analysis
-        job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
+    # The rest of the content is the job analysis
+    job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
 
-        return jsonify({
-            "job_id": job_id,
-            "company_name": company_name,
-            "job_analysis": job_analysis,
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "job_id": job_id,
+        "company_name": company_name,
+        "job_analysis": job_analysis,
+    })
 
 
 @app.route('/generate-cover-letter', methods=['POST'])
@@ -449,6 +270,7 @@ def analyze_job_posting_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
+@handle_llm_errors
 def generate_cover_letter_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -458,27 +280,23 @@ def generate_cover_letter_endpoint():
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
-    try:
-        llm = get_llm(user_api_key, model_name=model_name)
-        prompt = PROMPTS["COVER_LETTER"](job_posting_text, resume_json_data)
-        messages = [
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a professional career assistant. Your task is to generate a cover letter that" +
-                        " will help the user apply for the job based on the job description, and the users resume " +
-                        "data (JSON) provided.",
-            ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=prompt,
-            )
-        ]
-        response = llm.chat(messages)
-        cover_letter_content = response.message.content.strip()
-        return jsonify({"content": cover_letter_content})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    llm = get_llm(user_api_key, model_name=model_name)
+    prompt = PROMPTS["COVER_LETTER"](job_posting_text, resume_json_data)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="You are a professional career assistant. Your task is to generate a cover letter that" +
+                    " will help the user apply for the job based on the job description, and the users resume " +
+                    "data (JSON) provided.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=prompt,
+        )
+    ]
+    response = llm.chat(messages)
+    cover_letter_content = response.message.content.strip()
+    return jsonify({"content": cover_letter_content})
 
 
 @app.route('/tailor-resume', methods=['POST'])
@@ -503,8 +321,6 @@ def tailor_resume_endpoint():
         return jsonify({"error": "Missing one or more required fields"}), 400
 
     llm = get_llm(user_api_key, model_name=model_name)
-    with open("example_resume.yaml", "r") as f:
-        example_yaml_resume = f.read()
     prompt = PROMPTS["JSON_CONVERSION"](job_posting_text, resume_json_data)
     messages = [
         ChatMessage(
@@ -521,7 +337,6 @@ def tailor_resume_endpoint():
     resume_json_data = json.loads(resume_json_data)
     full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
 
-    yaml_string = None
     yaml_file_contents = None
 
     # Retry the entire process (LLM call + PDF generation) up to 3 times
@@ -593,9 +408,22 @@ def tailor_resume_endpoint():
                 else:
                     raise Exception("Failed to generate PDF file despite successful command execution.")
 
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:
+                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                elif e.response.status_code == 503:
+                    return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+                else:
+                    last_error_details = {"error": f"HTTP error: {str(e)}"}
             except (subprocess.CalledProcessError, Exception) as e:
                 print(f"Attempt {attempt + 1} failed. Problematic YAML:")
                 print(yaml_file_contents)
+
+                # Check for rate limiting errors
+                error_str = str(e).lower()
+                if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+
                 if isinstance(e, subprocess.CalledProcessError):
                     last_error_details = {
                         'error': f"Command failed with exit status {e.returncode}",
