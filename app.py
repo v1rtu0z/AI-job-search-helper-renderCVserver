@@ -19,6 +19,7 @@ import requests
 
 from prompts import PROMPTS
 
+
 # --- Configuration ---
 EXTENSION_SECRET = os.environ.get('EXTENSION_SECRET')
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
@@ -356,6 +357,8 @@ def tailor_resume_endpoint():
             try:
                 response = llm.chat(messages)
                 json_string = response.message.content.strip()
+
+                print(f"Raw JSON string: {json_string}")
 
                 if json_string.startswith('```json'):
                     json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()

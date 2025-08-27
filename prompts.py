@@ -61,6 +61,7 @@ PROMPTS = {
         - Replace strength name placeholders with actual sensible data. Same for ares for improvement
         - Make sure that the titles are larger that list items and that you're not repeating yourself
         - Change only the text values in the HTML format, leave everything else as it is.
+        - Make sure to properly color the fit score - the very poor fit should be very red and the very good fit should be very green along with everything in between properly coloer as well.
     """,
     "COVER_LETTER": lambda job_posting_text, resume_json_data: f"""
         The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to generate a cover letter that will
@@ -90,6 +91,7 @@ PROMPTS = {
     
     Instructions:
     - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
+    - *DO NOT* add any skills or experience to the output JSON that are not a part of the resume data JSON!
     - Output ONLY valid JSON in the exact structure shown below.
     - Do NOT add any placeholders or example data.
     - The JSON you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
@@ -97,7 +99,6 @@ PROMPTS = {
     - Do not include additional details. Only use the input data to populate the output JSON.
     - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
     - Pay attention not to confuse the user's location and the job's location.
-    - *DO NOT* add any skills or experience to the output JSON that is not a part of the resume data JSON!
 
     Required JSON Structure:
     {{
