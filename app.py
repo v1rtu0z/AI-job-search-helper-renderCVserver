@@ -177,6 +177,7 @@ PROMPTS = {
     - Do not include additional details. Only use the input data to populate the output JSON.
     - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
     - Pay attention not to confuse the user's location and the job's location.
+    - *DO NOT* add any skills or experience to the output JSON that is not a part of the resume data JSON!
 
     Required JSON Structure:
     {{
