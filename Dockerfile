@@ -14,6 +14,7 @@ RUN apt-get update && \
 # Copy the application files into the container
 COPY requirements.txt .
 COPY job_analysis_format.html .
+COPY prompts.py .
 COPY app.py .
 
 # Install any needed packages specified in requirements.txt
