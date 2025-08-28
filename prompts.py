@@ -113,6 +113,7 @@ PROMPTS = {
     - Do not include additional details. Only use the input data to populate the output JSON.
     - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
     - Pay attention not to confuse the user's location and the job's location.
+    - If the user provides their linkedin, there's no need for the full linkedin url, use only the linkedin username, it will get parsed into a proper url later
     {f"- Address the feedback provided above to improve the resume data." if retry_feedback else ""}
 
     Required JSON Structure:

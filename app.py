@@ -1,3 +1,4 @@
+import base64
 import datetime
 import functools
 import json
@@ -9,7 +10,7 @@ import tempfile
 import jwt
 import requests
 import yaml
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -322,13 +323,23 @@ def generate_cover_letter_endpoint():
     return jsonify({"content": cover_letter_content})
 
 
-@app.route('/generate-tailored-json', methods=['POST'])
+def array_buffer_to_base64(buffer) -> str:
+    return base64.b64encode(buffer).decode('utf-8')
+
+
+@app.route('/tailor-resume', methods=['POST'])
 @jwt_required
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
 @llm_retry(max_attempts=3)
-def generate_tailored_json_endpoint():
+def tailor_resume_endpoint():
+    """
+    Consolidates the tailored JSON generation and PDF rendering into a single endpoint.
+
+    It returns a JSON object containing the tailored resume JSON and the PDF
+    as a base64-encoded string.
+    """
     data = request.json
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
@@ -336,10 +347,13 @@ def generate_tailored_json_endpoint():
     model_name = data.get('model_name')
     current_resume_data = data.get('current_resume_data')
     retry_feedback = data.get('retry_feedback')
+    theme = data.get('theme', 'engineeringclassic')
+    filename = data.get('filename')
 
-    if not all([job_posting_text, resume_json_data]):
-        return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
+    if not all([job_posting_text, resume_json_data, filename]):
+        return jsonify({"error": "Missing 'job_posting_text', 'resume_json_data', or 'filename'"}), 400
 
+    # --- Step 1: Generate Tailored JSON Resume from LLM ---
     llm = get_llm(user_api_key, model_name=model_name)
     prompt = PROMPTS["JSON_CONVERSION"](
         job_posting_text,
@@ -361,92 +375,73 @@ def generate_tailored_json_endpoint():
     response = llm.chat(messages)
     json_string = response.message.content.strip()
 
-    print(f"Raw JSON string: {json_string}")
-
     if json_string.startswith('```json'):
         json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
     elif json_string.startswith('```'):
         json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
 
     try:
-        json_data = json.loads(json_string)
-        return jsonify({"tailored_resume_json": json_data})
+        tailored_resume_json = json.loads(json_string)
     except json.JSONDecodeError as e:
-        print(f"Error parsing JSON: {e}")
-        print(f"Raw response: {json_string}")
-        raise ValueError(f"Invalid JSON response: {e}")
+        return jsonify({"error": f"Invalid JSON response from LLM: {e}", "llm_raw_response": json_string}), 500
 
+    # --- Step 2: Render PDF using the Tailored JSON ---
+    with tempfile.TemporaryDirectory() as temp_dir:
+        full_name = tailored_resume_json["cv"]["name"].lower().replace(" ", "_")
 
-@app.route('/render-resume-pdf', methods=['POST'])
-@jwt_required
-@limiter.limit("2 per minute")
-@limiter.limit("20 per hour")
-@limiter.limit("100 per day")
-def render_resume_pdf_endpoint():
-    data = request.json
-    tailored_resume_json = data.get('tailored_resume_json')
-    theme = data.get('theme', 'engineeringclassic')
-    filename = data.get('filename')
+        # Check if the name field exists and is valid
+        if not full_name:
+            raise ValueError("Resume 'cv.name' field is missing or invalid.")
 
-    if not all([tailored_resume_json, filename]):
-        return jsonify({"error": "Missing 'tailored_resume_json' or 'filename'"}), 400
+        new_command = [
+            "rendercv", "new", full_name,
+            "--theme", theme
+        ]
+        subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-    try:
-        resume_json_data = json.loads(tailored_resume_json) if isinstance(tailored_resume_json,
-                                                                          str) else tailored_resume_json
-        full_name = resume_json_data["cv"]["name"].lower().replace(" ", "_")
+        yaml_path_base = f"{full_name}_CV.yaml"
+        yaml_path = os.path.join(temp_dir, yaml_path_base)
+        final_pdf_path = str(os.path.join(temp_dir, filename))
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            new_command = [
-                "rendercv", "new", full_name,
-                "--theme", theme
-            ]
-            print(f"Running command: {new_command}")
-            subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+        yaml_string = yaml.dump(tailored_resume_json, default_flow_style=False, allow_unicode=True,
+                                sort_keys=False,
+                                default_style='"')
+        yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
 
-            yaml_path_base = f"{full_name}_CV.yaml"
-            yaml_path = os.path.join(temp_dir, yaml_path_base)
-            final_pdf_path = str(os.path.join(temp_dir, filename))
+        with open(yaml_path, "r") as f:
+            existing_content = f.read()
 
-            yaml_string = yaml.dump(resume_json_data, default_flow_style=False, allow_unicode=True, sort_keys=False,
-                                    default_style='"')
-            yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
+        try:
+            split_index = existing_content.index('design:')
+            end_of_file_content = existing_content[split_index:].strip()
+        except ValueError:
+            end_of_file_content = ''
 
-            with open(yaml_path, "r") as f:
-                existing_content = f.read()
+        combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
 
-            try:
-                split_index = existing_content.index('design:')
-                end_of_file_content = existing_content[split_index:].strip()
-            except ValueError:
-                end_of_file_content = ''
+        with open(yaml_path, "w") as f:
+            f.write(combined_yaml.strip())
 
-            combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
+        render_command = [
+            "rendercv", "render", yaml_path_base,
+            "--pdf-path", final_pdf_path,
+            "--design.page.show_last_updated_date", "false",
+            "--locale.phone_number_format", "international"
+        ]
+        subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-            with open(yaml_path, "w") as f:
-                f.write(combined_yaml.strip())
+        if not os.path.exists(final_pdf_path):
+            raise Exception("Failed to generate PDF file despite successful command execution.")
 
-            render_command = [
-                "rendercv", "render", yaml_path_base,
-                "--pdf-path", final_pdf_path,
-                "--design.page.show_last_updated_date", "false",
-                "--locale.phone_number_format", "international"
-            ]
-            print(f"Running command: {render_command}")
-            subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+        with open(final_pdf_path, 'rb') as pdf_file:
+            pdf_bytes = pdf_file.read()
+            pdf_base64_string = base64.b64encode(pdf_bytes).decode('utf-8')
 
-            if os.path.exists(final_pdf_path):
-                return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True, download_name=filename)
-            else:
-                raise Exception("Failed to generate PDF file despite successful command execution.")
-
-    except subprocess.CalledProcessError as e:
+        # Return both the tailored JSON and the base64 PDF string
         return jsonify({
-            'error': f"Command failed with exit status {e.returncode}",
-            'details': e.stdout + '\n' + e.stderr
-        }), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            "tailored_resume_json": tailored_resume_json,
+            "pdf_base64_string": pdf_base64_string
+        })
 
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
