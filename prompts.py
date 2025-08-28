@@ -43,7 +43,8 @@ PROMPTS = {
 
         Return only the search query string and nothing else.
     """,
-    "JOB_ANALYSIS": lambda job_posting_text, resume_json_data, job_analysis_format: f"""
+    "JOB_ANALYSIS": lambda job_posting_text, resume_json_data, job_analysis_format, previous_analysis=None,
+                           job_specific_context=None: f"""
         The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to provide a comprehensive job analysis in a structured HTML document, strictly adhering to the format outlined in the provided 'Job Analysis Format' file.
 
         **Input Data:**
@@ -53,17 +54,22 @@ PROMPTS = {
         {resume_json_data}
         **Job Analysis Format:**
         {job_analysis_format}
-        
+
+        {f"Previous analysis to improve upon: {previous_analysis}" if previous_analysis else ""}
+        {f"Job-specific context to consider: {job_specific_context}" if job_specific_context else ""}
+
         **Instructions:**
         - Compare the user's resume JSON data (including the 'additionalDetails' field) against the job description.
         - The analysis should take into consideration any missing or misaligned elements from the job description like location, remote work policy, industry, position, seniority, salary range, etc.
         - The output must start with [job title] @ [company name] so that it can be easily identified. If these can't be found, return an error message.
-        - Replace strength name placeholders with actual sensible data. Same for ares for improvement
+        - Replace strength name placeholders with actual sensible data. Same for areas for improvement
         - Make sure that the titles are larger that list items and that you're not repeating yourself
         - Change only the text values in the HTML format, leave everything else as it is.
-        - Make sure to properly color the fit score - the very poor fit should be very red and the very good fit should be very green along with everything in between properly coloer as well.
+        - Make sure to properly color the fit score - the very poor fit should be very red and the very good fit should be very green along with everything in between properly color as well.
+        {f"- Address the previous analysis and context provided above to improve the output." if previous_analysis or job_specific_context else ""}
     """,
-    "COVER_LETTER": lambda job_posting_text, resume_json_data: f"""
+    "COVER_LETTER": lambda job_posting_text, resume_json_data, job_specific_context=None, current_content=None,
+                           retry_feedback=None: f"""
         The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to generate a cover letter that will
         help the user apply for the job based on the job description, and the users resume data (JSON) provided.
         The resume JSON data includes 'additionalDetails' field you should pay attention to.
@@ -73,14 +79,19 @@ PROMPTS = {
         **Resume data JSON:**
         {resume_json_data}
 
+        {f"Job-specific context: {job_specific_context}" if job_specific_context else ""}
+        {f"Current cover letter content to improve: {current_content}" if current_content else ""}
+        {f"Feedback to address: {retry_feedback}" if retry_feedback else ""}
+
         Some general guidelines: make it at most 3-4 paragraphs long, address their strengths and in
         case that there are any missing skills, address those head on based on the users other skills
         (ie stuff like quick learning, hard-working, commitment to excellence etc). Make sure to
         reference the details from the job post as much as possible.
         Note that the job description might not be in English and shouldn't be dismissed in that case!
         Always write the cover letter in the same language as the job description.
+        {f"Address the feedback provided above to improve the cover letter." if retry_feedback else ""}
     """,
-    "JSON_CONVERSION": lambda job_posting_text, resume_json_data: f"""
+    "JSON_CONVERSION": lambda job_posting_text, resume_json_data, current_resume_data=None, retry_feedback=None: f"""
     The year is {datetime.date.today().year}. You are a professional career assistant. Your task is to convert the JSON resume data into a tailored JSON resume, based on the job description.
 
     Input Data:
@@ -88,7 +99,10 @@ PROMPTS = {
     {job_posting_text}
     Resume data JSON:
     {resume_json_data}
-    
+
+    {f"Current resume data to improve: {current_resume_data}" if current_resume_data else ""}
+    {f"Feedback to address: {retry_feedback}" if retry_feedback else ""}
+
     Instructions:
     - Use the Job Description to highlight and reorder relevant skills and experiences from the JSON data.
     - *DO NOT* add any skills or experience to the output JSON that are not a part of the resume data JSON!
@@ -99,6 +113,7 @@ PROMPTS = {
     - Do not include additional details. Only use the input data to populate the output JSON.
     - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
     - Pay attention not to confuse the user's location and the job's location.
+    {f"- Address the feedback provided above to improve the resume data." if retry_feedback else ""}
 
     Required JSON Structure:
     {{
@@ -123,7 +138,7 @@ PROMPTS = {
                     {{
                         "institution": "University Name",
                         "area": "Field of Study",
-                        "degree": "Degree Type (BSc, MSc, etc.)",
+                        "degree": "Degree Type (One of: BA, BS, MA, MBA, Phd)",
                         "start_date": "YYYY-MM",
                         "end_date": "YYYY-MM or present",
                         "location": "City, State/Country",

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 import jwt
+import requests
 import yaml
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -15,10 +16,8 @@ from flask_limiter.util import get_remote_address
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.llms.google_genai import GoogleGenAI
 from werkzeug.exceptions import Unauthorized
-import requests
 
 from prompts import PROMPTS
-
 
 # --- Configuration ---
 EXTENSION_SECRET = os.environ.get('EXTENSION_SECRET')
@@ -48,7 +47,6 @@ def get_jwt_user_id():
         raise Unauthorized("Invalid token.")
 
 
-# Initialize the rate limiter with a key function for JWT-based auth
 limiter = Limiter(
     key_func=get_jwt_user_id,
     app=app,
@@ -68,7 +66,6 @@ def jwt_required(func):
     return wrapper
 
 
-# --- LLM and Prompt Definitions ---
 def get_llm(user_api_key: str | None = None, model_name: str | None = None):
     # Use the user's key if provided, otherwise fallback to the developer's key
     api_key = user_api_key if user_api_key else GEMINI_API_KEY
@@ -81,30 +78,38 @@ def get_llm(user_api_key: str | None = None, model_name: str | None = None):
     )
 
 
-def handle_llm_errors(func):
-    """Decorator to handle LLM errors and return appropriate HTTP responses"""
+def llm_retry(max_attempts=3):
+    """Decorator to add retry logic to LLM-calling functions"""
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-            elif e.response.status_code == 503:
-                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
-            else:
-                return jsonify({"error": f"HTTP error: {str(e)}"}), 500
-        except Exception as e:
-            error_str = str(e).lower()
-            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
-                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-            return jsonify({"error": str(e)}), 500
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 429:
+                        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                    elif e.response.status_code == 503:
+                        return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+                    else:
+                        last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                    last_error = jsonify({"error": str(e)}), 500
 
-    return wrapper
+                print(f"Attempt {attempt + 1} failed: {last_error}")
+
+            return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
+
+        return wrapper
+
+    return decorator
 
 
-# --- Server Endpoints ---
 @app.route('/')
 def home():
     return '<h1>CV Generator is running!</h1>'
@@ -133,13 +138,12 @@ def authenticate():
         return jsonify({'error': 'Invalid client secret'}), 401
 
 
-# --- New AI Endpoints ---
 @app.route('/get-resume-json', methods=['POST'])
 @jwt_required
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@handle_llm_errors
+@llm_retry(max_attempts=3)
 def get_resume_json_endpoint():
     data = request.json
     resume_content = data.get('resume_content')
@@ -177,7 +181,7 @@ def get_resume_json_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@handle_llm_errors
+@llm_retry(max_attempts=3)
 def generate_search_query_endpoint():
     data = request.json
     resume_json_data = data.get('resume_json_data')
@@ -209,13 +213,15 @@ def generate_search_query_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@handle_llm_errors
+@llm_retry(max_attempts=3)
 def analyze_job_posting_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
+    previous_analysis = data.get('previous_analysis')
+    job_specific_context = data.get('job_specific_context')
 
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
@@ -224,7 +230,13 @@ def analyze_job_posting_endpoint():
         job_analysis_format = f.read()
 
     llm = get_llm(user_api_key, model_name=model_name)
-    analysis_prompt = PROMPTS["JOB_ANALYSIS"](job_posting_text, resume_json_data, job_analysis_format)
+    analysis_prompt = PROMPTS["JOB_ANALYSIS"](
+        job_posting_text,
+        resume_json_data,
+        job_analysis_format,
+        previous_analysis,
+        job_specific_context
+    )
     messages = [
         ChatMessage(
             role=MessageRole.SYSTEM,
@@ -271,18 +283,28 @@ def analyze_job_posting_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@handle_llm_errors
+@llm_retry(max_attempts=3)
 def generate_cover_letter_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
+    job_specific_context = data.get('job_specific_context')
+    current_content = data.get('current_content')
+    retry_feedback = data.get('retry_feedback')
+
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
     llm = get_llm(user_api_key, model_name=model_name)
-    prompt = PROMPTS["COVER_LETTER"](job_posting_text, resume_json_data)
+    prompt = PROMPTS["COVER_LETTER"](
+        job_posting_text,
+        resume_json_data,
+        job_specific_context,
+        current_content,
+        retry_feedback
+    )
     messages = [
         ChatMessage(
             role=MessageRole.SYSTEM,
@@ -300,142 +322,131 @@ def generate_cover_letter_endpoint():
     return jsonify({"content": cover_letter_content})
 
 
-@app.route('/tailor-resume', methods=['POST'])
+@app.route('/generate-tailored-json', methods=['POST'])
 @jwt_required
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-def tailor_resume_endpoint():
+@llm_retry(max_attempts=3)
+def generate_tailored_json_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
     resume_json_data = data.get('resume_json_data')
-    theme = data.get('theme', 'engineeringclassic')
-    filename = data.get('filename')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
+    current_resume_data = data.get('current_resume_data')
+    retry_feedback = data.get('retry_feedback')
 
-    if not all([
-        job_posting_text,
-        resume_json_data,
-        filename
-    ]):
-        return jsonify({"error": "Missing one or more required fields"}), 400
+    if not all([job_posting_text, resume_json_data]):
+        return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
     llm = get_llm(user_api_key, model_name=model_name)
-    prompt = PROMPTS["JSON_CONVERSION"](job_posting_text, resume_json_data)
+    prompt = PROMPTS["JSON_CONVERSION"](
+        job_posting_text,
+        resume_json_data,
+        current_resume_data,
+        retry_feedback
+    )
     messages = [
         ChatMessage(
             role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* YAML resume, based on the job description.",
+            content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* JSON resume, based on the job description.",
         ),
         ChatMessage(
             role=MessageRole.USER,
             content=prompt,
         )
     ]
-    last_error_details = None
 
-    resume_json_data = json.loads(resume_json_data)
-    full_name = resume_json_data["personal"]["full_name"].lower().replace(" ", "_")
+    response = llm.chat(messages)
+    json_string = response.message.content.strip()
 
-    yaml_file_contents = None
+    print(f"Raw JSON string: {json_string}")
 
-    # Retry the entire process (LLM call + PDF generation) up to 3 times
-    with tempfile.TemporaryDirectory() as temp_dir:
-        new_command = [
-            "rendercv", "new", full_name,
-            "--theme", theme
-        ]
-        print(f"Running command: {new_command}")
-        subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+    if json_string.startswith('```json'):
+        json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
+    elif json_string.startswith('```'):
+        json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
 
-        yaml_path_base = f"{full_name}_CV.yaml"
-        yaml_path = os.path.join(temp_dir, yaml_path_base)
-        final_pdf_path = str(os.path.join(temp_dir, filename))
+    try:
+        json_data = json.loads(json_string)
+        return jsonify({"tailored_resume_json": json_data})
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON: {e}")
+        print(f"Raw response: {json_string}")
+        raise ValueError(f"Invalid JSON response: {e}")
 
-        for attempt in range(3):
+
+@app.route('/render-resume-pdf', methods=['POST'])
+@jwt_required
+@limiter.limit("2 per minute")
+@limiter.limit("20 per hour")
+@limiter.limit("100 per day")
+def render_resume_pdf_endpoint():
+    data = request.json
+    tailored_resume_json = data.get('tailored_resume_json')
+    theme = data.get('theme', 'engineeringclassic')
+    filename = data.get('filename')
+
+    if not all([tailored_resume_json, filename]):
+        return jsonify({"error": "Missing 'tailored_resume_json' or 'filename'"}), 400
+
+    try:
+        resume_json_data = json.loads(tailored_resume_json) if isinstance(tailored_resume_json,
+                                                                          str) else tailored_resume_json
+        full_name = resume_json_data["cv"]["name"].lower().replace(" ", "_")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            new_command = [
+                "rendercv", "new", full_name,
+                "--theme", theme
+            ]
+            print(f"Running command: {new_command}")
+            subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+            yaml_path_base = f"{full_name}_CV.yaml"
+            yaml_path = os.path.join(temp_dir, yaml_path_base)
+            final_pdf_path = str(os.path.join(temp_dir, filename))
+
+            yaml_string = yaml.dump(resume_json_data, default_flow_style=False, allow_unicode=True, sort_keys=False,
+                                    default_style='"')
+            yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
+
+            with open(yaml_path, "r") as f:
+                existing_content = f.read()
+
             try:
-                response = llm.chat(messages)
-                json_string = response.message.content.strip()
+                split_index = existing_content.index('design:')
+                end_of_file_content = existing_content[split_index:].strip()
+            except ValueError:
+                end_of_file_content = ''
 
-                print(f"Raw JSON string: {json_string}")
+            combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
 
-                if json_string.startswith('```json'):
-                    json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-                elif json_string.startswith('```'):
-                    json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
+            with open(yaml_path, "w") as f:
+                f.write(combined_yaml.strip())
 
-                try:
-                    json_data = json.loads(json_string)
+            render_command = [
+                "rendercv", "render", yaml_path_base,
+                "--pdf-path", final_pdf_path,
+                "--design.page.show_last_updated_date", "false",
+                "--locale.phone_number_format", "international"
+            ]
+            print(f"Running command: {render_command}")
+            subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
 
-                    yaml_string = yaml.dump(json_data, default_flow_style=False, allow_unicode=True, sort_keys=False,
-                                            default_style='"')
+            if os.path.exists(final_pdf_path):
+                return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True, download_name=filename)
+            else:
+                raise Exception("Failed to generate PDF file despite successful command execution.")
 
-                    yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
-                except json.JSONDecodeError as e:
-                    print(f"Error parsing JSON: {e}")
-                    print(f"Raw response: {json_string}")
-                    raise
-
-                with open(yaml_path, "r") as f:
-                    existing_content = f.read()
-
-                try:
-                    split_index = existing_content.index('design:')
-                    end_of_file_content = existing_content[split_index:].strip()
-                except ValueError:
-                    end_of_file_content = ''
-
-                combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
-
-                with open(yaml_path, "w") as f:
-                    f.write(combined_yaml.strip())
-
-                with open(yaml_path, "r") as f:
-                    print(f"Contents of {yaml_path}:")
-                    yaml_file_contents = f.read()
-                    print(yaml_file_contents)
-
-                render_command = [
-                    "rendercv", "render", yaml_path_base,
-                    "--pdf-path", final_pdf_path,
-                    "--design.page.show_last_updated_date", "false",
-                    "--locale.phone_number_format", "international"
-                ]
-                print(f"Running command: {render_command}")
-                subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
-
-                if os.path.exists(final_pdf_path):
-                    return send_file(final_pdf_path, mimetype='application/pdf', as_attachment=True,
-                                     download_name=filename)
-                else:
-                    raise Exception("Failed to generate PDF file despite successful command execution.")
-
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429:
-                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-                elif e.response.status_code == 503:
-                    return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
-                else:
-                    last_error_details = {"error": f"HTTP error: {str(e)}"}
-            except (subprocess.CalledProcessError, Exception) as e:
-                print(f"Attempt {attempt + 1} failed. Problematic YAML:")
-                print(yaml_file_contents)
-
-                # Check for rate limiting errors
-                error_str = str(e).lower()
-                if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
-                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-
-                if isinstance(e, subprocess.CalledProcessError):
-                    last_error_details = {
-                        'error': f"Command failed with exit status {e.returncode}",
-                        'details': e.stdout + '\n' + e.stderr
-                    }
-                else:
-                    last_error_details = {"error": str(e)}
-
-    return jsonify(last_error_details), 500
+    except subprocess.CalledProcessError as e:
+        return jsonify({
+            'error': f"Command failed with exit status {e.returncode}",
+            'details': e.stdout + '\n' + e.stderr
+        }), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
