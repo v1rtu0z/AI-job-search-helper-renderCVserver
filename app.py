@@ -422,6 +422,7 @@ def tailor_resume_endpoint():
     # Inlined retry logic
     max_attempts = 3
     last_error = None
+    json_string = None
 
     for attempt in range(max_attempts):
         try:
@@ -525,6 +526,9 @@ def tailor_resume_endpoint():
                 })
 
         except requests.exceptions.HTTPError as e:
+            if private_data_logging:
+                print(f"An HTTP error occurred while generating the PDF. Error: {e}")
+                print(f"LLM output: {json_string}")
             if e.response.status_code == 429:
                 return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
             elif e.response.status_code == 503:
@@ -535,6 +539,8 @@ def tailor_resume_endpoint():
             error_str = str(e).lower()
             if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
                 return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            if " returned non-zero exit status 4." in error_str and private_data_logging:
+                print(f"LLM returned bad JSON: {json_string}")
             last_error = jsonify({"error": str(e)}), 500
 
         print(f"Attempt {attempt + 1} failed: {last_error}")
