@@ -150,6 +150,8 @@ def get_resume_json_endpoint():
     resume_content = data.get('resume_content')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
+    private_data_logging = data.get('private_data_logging', False)
+
     if not resume_content:
         return jsonify({"error": "Missing 'resume_content'"}), 400
 
@@ -169,10 +171,13 @@ def get_resume_json_endpoint():
     response = llm.chat(messages)
     llm_output = response.message.content.strip()
 
-    if llm_output.startswith('```json'):
-        llm_output = llm_output.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-    else:
-        raise ValueError('Response does not start with ```json```.')
+    if not llm_output.startswith('```json'):
+        error_message = 'Response does not start with ```json```.'
+        if private_data_logging:
+            error_message += f' Response: {llm_output}'
+        raise ValueError(error_message)
+
+    llm_output = llm_output.removeprefix('```json').removesuffix('```').strip()
 
     return llm_output
 
@@ -188,6 +193,7 @@ def generate_search_query_endpoint():
     resume_json_data = data.get('resume_json_data')
     user_api_key = data.get('gemini_api_key')
     model_name = data.get('model_name')
+
     if not resume_json_data:
         return jsonify({"error": "Missing 'resume_json_data'"}), 400
 
@@ -206,6 +212,7 @@ def generate_search_query_endpoint():
     ]
     response = llm.chat(messages)
     search_query = response.message.content.strip()
+
     return jsonify({"search_query": search_query})
 
 
@@ -223,6 +230,7 @@ def analyze_job_posting_endpoint():
     model_name = data.get('model_name')
     previous_analysis = data.get('previous_analysis')
     job_specific_context = data.get('job_specific_context')
+    private_data_logging = data.get('private_data_logging', False)
 
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
@@ -250,12 +258,17 @@ def analyze_job_posting_endpoint():
     ]
     response = llm.chat(messages)
     llm_output = response.message.content.strip()
-    print("Raw LLM Output:")
-    print(llm_output)
 
-    cleaned_output = llm_output.strip().removeprefix('```html').removesuffix('```').strip()
-    print("\nCleaned LLM Output:")
-    print(cleaned_output)
+    if not llm_output:
+        raise ValueError('LLM output is empty.')
+
+    if not llm_output.startswith('```html'):
+        error_message = 'Response does not start with ```html```.'
+        if private_data_logging:
+            error_message += f' Response: {llm_output}'
+        raise ValueError(error_message)
+
+    cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
 
     lines = cleaned_output.split('\n', 1)
 
@@ -267,7 +280,7 @@ def analyze_job_posting_endpoint():
     if '@' not in job_id:
         raise ValueError('Job analysis does not start with [job title] @ [company name].')
 
-    company_name = job_id.split(' @ ')[-1]
+    company_name = job_id.split(' @ ')[-1].strip()
 
     # The rest of the content is the job analysis
     job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
@@ -349,6 +362,7 @@ def tailor_resume_endpoint():
     retry_feedback = data.get('retry_feedback')
     theme = data.get('theme', 'engineeringclassic')
     filename = data.get('filename')
+    private_data_logging = data.get('private_data_logging', False)
 
     if not all([job_posting_text, resume_json_data, filename]):
         return jsonify({"error": "Missing 'job_posting_text', 'resume_json_data', or 'filename'"}), 400
@@ -374,6 +388,15 @@ def tailor_resume_endpoint():
 
     response = llm.chat(messages)
     json_string = response.message.content.strip()
+
+    if not json_string:
+        raise ValueError('LLM output is empty.')
+
+    if not json_string.startswith('```json') and not json_string.startswith('```'):
+        error_message = 'Response does not start with ```json```.'
+        if private_data_logging:
+            error_message += f' Response: {json_string}'
+        raise ValueError(error_message)
 
     if json_string.startswith('```json'):
         json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
