@@ -79,38 +79,6 @@ def get_llm(user_api_key: str | None = None, model_name: str | None = None):
     )
 
 
-def llm_retry(max_attempts=3):
-    """Decorator to add retry logic to LLM-calling functions"""
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            last_error = None
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 429:
-                        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-                    elif e.response.status_code == 503:
-                        return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
-                    else:
-                        last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
-                        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-                    last_error = jsonify({"error": str(e)}), 500
-
-                print(f"Attempt {attempt + 1} failed: {last_error}")
-
-            return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
-
-        return wrapper
-
-    return decorator
-
-
 @app.route('/')
 def home():
     return '<h1>CV Generator is running!</h1>'
@@ -144,7 +112,6 @@ def authenticate():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@llm_retry(max_attempts=3)
 def get_resume_json_endpoint():
     data = request.json
     resume_content = data.get('resume_content')
@@ -155,31 +122,53 @@ def get_resume_json_endpoint():
     if not resume_content:
         return jsonify({"error": "Missing 'resume_content'"}), 400
 
-    llm = get_llm(user_api_key, model_name=model_name)
-    messages = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to provide a json formatted " +
-                    "resume data and an advanced linkedin search query based on the user's resume and additional " +
-                    "details.",
-        ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content=PROMPTS["RESUME_AND_SEARCH_QUERY"](resume_content),
-        ),
-    ]
-    response = llm.chat(messages)
-    llm_output = response.message.content.strip()
+    # Inlined retry logic
+    max_attempts = 3
+    last_error = None
 
-    if not llm_output.startswith('```json'):
-        error_message = 'Response does not start with ```json```.'
-        if private_data_logging:
-            error_message += f' Response: {llm_output}'
-        raise ValueError(error_message)
+    for attempt in range(max_attempts):
+        try:
+            llm = get_llm(user_api_key, model_name=model_name)
+            messages = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="You are a professional career assistant. Your task is to provide a json formatted " +
+                            "resume data and an advanced linkedin search query based on the user's resume and additional " +
+                            "details.",
+                ),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=PROMPTS["RESUME_AND_SEARCH_QUERY"](resume_content),
+                ),
+            ]
+            response = llm.chat(messages)
+            llm_output = response.message.content.strip()
 
-    llm_output = llm_output.removeprefix('```json').removesuffix('```').strip()
+            if not llm_output.startswith('```json'):
+                error_message = 'Response does not start with ```json```.'
+                if private_data_logging:
+                    error_message += f' Response: {llm_output}'
+                raise ValueError(error_message)
 
-    return llm_output
+            llm_output = llm_output.removeprefix('```json').removesuffix('```').strip()
+            return llm_output
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            last_error = jsonify({"error": str(e)}), 500
+
+        print(f"Attempt {attempt + 1} failed: {last_error}")
+
+    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
 
 
 @app.route('/generate-search-query', methods=['POST'])
@@ -187,7 +176,6 @@ def get_resume_json_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@llm_retry(max_attempts=3)
 def generate_search_query_endpoint():
     data = request.json
     resume_json_data = data.get('resume_json_data')
@@ -197,23 +185,45 @@ def generate_search_query_endpoint():
     if not resume_json_data:
         return jsonify({"error": "Missing 'resume_json_data'"}), 400
 
-    llm = get_llm(user_api_key, model_name=model_name)
-    messages = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to provide a json " +
-                    "formatted resume data and an advanced linkedin search query based on the user's " +
-                    "resume and additional details.",
-        ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content=PROMPTS["SEARCH_QUERY_ONLY"](resume_json_data),
-        )
-    ]
-    response = llm.chat(messages)
-    search_query = response.message.content.strip()
+    # Inlined retry logic
+    max_attempts = 3
+    last_error = None
 
-    return jsonify({"search_query": search_query})
+    for attempt in range(max_attempts):
+        try:
+            llm = get_llm(user_api_key, model_name=model_name)
+            messages = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="You are a professional career assistant. Your task is to provide a json " +
+                            "formatted resume data and an advanced linkedin search query based on the user's " +
+                            "resume and additional details.",
+                ),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=PROMPTS["SEARCH_QUERY_ONLY"](resume_json_data),
+                )
+            ]
+            response = llm.chat(messages)
+            search_query = response.message.content.strip()
+            return jsonify({"search_query": search_query})
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            last_error = jsonify({"error": str(e)}), 500
+
+        print(f"Attempt {attempt + 1} failed: {last_error}")
+
+    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
 
 
 @app.route('/analyze-job-posting', methods=['POST'])
@@ -221,7 +231,6 @@ def generate_search_query_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@llm_retry(max_attempts=3)
 def analyze_job_posting_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -235,61 +244,81 @@ def analyze_job_posting_endpoint():
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
-    with open("job_analysis_format.html", "r") as f:
-        job_analysis_format = f.read()
+    # Inlined retry logic
+    max_attempts = 3
+    last_error = None
 
-    llm = get_llm(user_api_key, model_name=model_name)
-    analysis_prompt = PROMPTS["JOB_ANALYSIS"](
-        job_posting_text,
-        resume_json_data,
-        job_analysis_format,
-        previous_analysis,
-        job_specific_context
-    )
-    messages = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to provide a job analysis in a structured Markdown document.",
-        ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content=analysis_prompt,
-        )
-    ]
-    response = llm.chat(messages)
-    llm_output = response.message.content.strip()
+    for attempt in range(max_attempts):
+        try:
+            with open("job_analysis_format.html", "r") as f:
+                job_analysis_format = f.read()
 
-    if not llm_output:
-        raise ValueError('LLM output is empty.')
+            llm = get_llm(user_api_key, model_name=model_name)
+            analysis_prompt = PROMPTS["JOB_ANALYSIS"](
+                job_posting_text,
+                resume_json_data,
+                job_analysis_format,
+                previous_analysis,
+                job_specific_context
+            )
+            messages = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="You are a professional career assistant. Your task is to provide a job analysis in a structured Markdown document.",
+                ),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=analysis_prompt,
+                )
+            ]
+            response = llm.chat(messages)
+            llm_output = response.message.content.strip()
 
-    if not llm_output.startswith('```html'):
-        error_message = 'Response does not start with ```html```.'
-        if private_data_logging:
-            error_message += f' Response: {llm_output}'
-        raise ValueError(error_message)
+            if not llm_output:
+                raise ValueError('LLM output is empty.')
 
-    cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
+            if not llm_output.startswith('```html'):
+                error_message = 'Response does not start with ```html```.'
+                if private_data_logging:
+                    error_message += f' Response: {llm_output}'
+                raise ValueError(error_message)
 
-    lines = cleaned_output.split('\n', 1)
+            cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
 
-    job_id = lines[0].strip()
+            lines = cleaned_output.split('\n', 1)
+            job_id = lines[0].strip()
 
-    if job_id.startswith('#'):
-        job_id = job_id[1:].strip()
+            if job_id.startswith('#'):
+                job_id = job_id[1:].strip()
 
-    if '@' not in job_id:
-        raise ValueError('Job analysis does not start with [job title] @ [company name].')
+            if '@' not in job_id:
+                raise ValueError('Job analysis does not start with [job title] @ [company name].')
 
-    company_name = job_id.split(' @ ')[-1].strip()
+            company_name = job_id.split(' @ ')[-1].strip()
+            job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
 
-    # The rest of the content is the job analysis
-    job_analysis = (lines[1] or '').strip() if len(lines) > 1 else ''
+            return jsonify({
+                "job_id": job_id,
+                "company_name": company_name,
+                "job_analysis": job_analysis,
+            })
 
-    return jsonify({
-        "job_id": job_id,
-        "company_name": company_name,
-        "job_analysis": job_analysis,
-    })
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            last_error = jsonify({"error": str(e)}), 500
+
+        print(f"Attempt {attempt + 1} failed: {last_error}")
+
+    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
 
 
 @app.route('/generate-cover-letter', methods=['POST'])
@@ -297,7 +326,6 @@ def analyze_job_posting_endpoint():
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@llm_retry(max_attempts=3)
 def generate_cover_letter_endpoint():
     data = request.json
     job_posting_text = data.get('job_posting_text')
@@ -311,29 +339,52 @@ def generate_cover_letter_endpoint():
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
 
-    llm = get_llm(user_api_key, model_name=model_name)
-    prompt = PROMPTS["COVER_LETTER"](
-        job_posting_text,
-        resume_json_data,
-        job_specific_context,
-        current_content,
-        retry_feedback
-    )
-    messages = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to generate a cover letter that" +
-                    " will help the user apply for the job based on the job description, and the users resume " +
-                    "data (JSON) provided.",
-        ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content=prompt,
-        )
-    ]
-    response = llm.chat(messages)
-    cover_letter_content = response.message.content.strip()
-    return jsonify({"content": cover_letter_content})
+    # Inlined retry logic
+    max_attempts = 3
+    last_error = None
+
+    for attempt in range(max_attempts):
+        try:
+            llm = get_llm(user_api_key, model_name=model_name)
+            prompt = PROMPTS["COVER_LETTER"](
+                job_posting_text,
+                resume_json_data,
+                job_specific_context,
+                current_content,
+                retry_feedback
+            )
+            messages = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="You are a professional career assistant. Your task is to generate a cover letter that" +
+                            " will help the user apply for the job based on the job description, and the users resume " +
+                            "data (JSON) provided.",
+                ),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=prompt,
+                )
+            ]
+            response = llm.chat(messages)
+            cover_letter_content = response.message.content.strip()
+            return jsonify({"content": cover_letter_content})
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            last_error = jsonify({"error": str(e)}), 500
+
+        print(f"Attempt {attempt + 1} failed: {last_error}")
+
+    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
 
 
 def array_buffer_to_base64(buffer) -> str:
@@ -345,7 +396,6 @@ def array_buffer_to_base64(buffer) -> str:
 @limiter.limit("2 per minute")
 @limiter.limit("20 per hour")
 @limiter.limit("100 per day")
-@llm_retry(max_attempts=3)
 def tailor_resume_endpoint():
     """
     Consolidates the tailored JSON generation and PDF rendering into a single endpoint.
@@ -367,105 +417,127 @@ def tailor_resume_endpoint():
     if not all([job_posting_text, resume_json_data, filename]):
         return jsonify({"error": "Missing 'job_posting_text', 'resume_json_data', or 'filename'"}), 400
 
-    # --- Step 1: Generate Tailored JSON Resume from LLM ---
-    llm = get_llm(user_api_key, model_name=model_name)
-    prompt = PROMPTS["JSON_CONVERSION"](
-        job_posting_text,
-        resume_json_data,
-        current_resume_data,
-        retry_feedback
-    )
-    messages = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* JSON resume, based on the job description.",
-        ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content=prompt,
-        )
-    ]
+    # Inlined retry logic
+    max_attempts = 3
+    last_error = None
 
-    response = llm.chat(messages)
-    json_string = response.message.content.strip()
-
-    if not json_string:
-        raise ValueError('LLM output is empty.')
-
-    if not json_string.startswith('```json') and not json_string.startswith('```'):
-        error_message = 'Response does not start with ```json```.'
-        if private_data_logging:
-            error_message += f' Response: {json_string}'
-        raise ValueError(error_message)
-
-    if json_string.startswith('```json'):
-        json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-    elif json_string.startswith('```'):
-        json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
-
-    try:
-        tailored_resume_json = json.loads(json_string)
-    except json.JSONDecodeError as e:
-        return jsonify({"error": f"Invalid JSON response from LLM: {e}", "llm_raw_response": json_string}), 500
-
-    # --- Step 2: Render PDF using the Tailored JSON ---
-    with tempfile.TemporaryDirectory() as temp_dir:
-        full_name = tailored_resume_json["cv"]["name"].lower().replace(" ", "_")
-
-        # Check if the name field exists and is valid
-        if not full_name:
-            raise ValueError("Resume 'cv.name' field is missing or invalid.")
-
-        new_command = [
-            "rendercv", "new", full_name,
-            "--theme", theme
-        ]
-        subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
-
-        yaml_path_base = f"{full_name}_CV.yaml"
-        yaml_path = os.path.join(temp_dir, yaml_path_base)
-        final_pdf_path = str(os.path.join(temp_dir, filename))
-
-        yaml_string = yaml.dump(tailored_resume_json, default_flow_style=False, allow_unicode=True,
-                                sort_keys=False,
-                                default_style='"')
-        yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
-
-        with open(yaml_path, "r") as f:
-            existing_content = f.read()
-
+    for attempt in range(max_attempts):
         try:
-            split_index = existing_content.index('design:')
-            end_of_file_content = existing_content[split_index:].strip()
-        except ValueError:
-            end_of_file_content = ''
+            # --- Step 1: Generate Tailored JSON Resume from LLM ---
+            llm = get_llm(user_api_key, model_name=model_name)
+            prompt = PROMPTS["JSON_CONVERSION"](
+                job_posting_text,
+                resume_json_data,
+                current_resume_data,
+                retry_feedback
+            )
+            messages = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* JSON resume, based on the job description.",
+                ),
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=prompt,
+                )
+            ]
 
-        combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
+            response = llm.chat(messages)
+            json_string = response.message.content.strip()
 
-        with open(yaml_path, "w") as f:
-            f.write(combined_yaml.strip())
+            if not json_string:
+                raise ValueError('LLM output is empty.')
 
-        render_command = [
-            "rendercv", "render", yaml_path_base,
-            "--pdf-path", final_pdf_path,
-            "--design.page.show_last_updated_date", "false",
-            "--locale.phone_number_format", "international"
-        ]
-        subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+            if not json_string.startswith('```json') and not json_string.startswith('```'):
+                error_message = 'Response does not start with ```json```.'
+                if private_data_logging:
+                    error_message += f' Response: {json_string}'
+                raise ValueError(error_message)
 
-        if not os.path.exists(final_pdf_path):
-            raise Exception("Failed to generate PDF file despite successful command execution.")
+            if json_string.startswith('```json'):
+                json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
+            elif json_string.startswith('```'):
+                json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
 
-        with open(final_pdf_path, 'rb') as pdf_file:
-            pdf_bytes = pdf_file.read()
-            pdf_base64_string = base64.b64encode(pdf_bytes).decode('utf-8')
+            try:
+                tailored_resume_json = json.loads(json_string)
+            except json.JSONDecodeError as e:
+                return jsonify({"error": f"Invalid JSON response from LLM: {e}", "llm_raw_response": json_string}), 500
 
-        # Return both the tailored JSON and the base64 PDF string
-        return jsonify({
-            "tailored_resume_json": tailored_resume_json,
-            "pdf_base64_string": pdf_base64_string
-        })
+            # --- Step 2: Render PDF using the Tailored JSON ---
+            with tempfile.TemporaryDirectory() as temp_dir:
+                full_name = tailored_resume_json["cv"]["name"].lower().replace(" ", "_")
 
+                # Check if the name field exists and is valid
+                if not full_name:
+                    raise ValueError("Resume 'cv.name' field is missing or invalid.")
+
+                new_command = [
+                    "rendercv", "new", full_name,
+                    "--theme", theme
+                ]
+                subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+                yaml_path_base = f"{full_name}_CV.yaml"
+                yaml_path = os.path.join(temp_dir, yaml_path_base)
+                final_pdf_path = str(os.path.join(temp_dir, filename))
+
+                yaml_string = yaml.dump(tailored_resume_json, default_flow_style=False, allow_unicode=True,
+                                        sort_keys=False,
+                                        default_style='"')
+                yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
+
+                with open(yaml_path, "r") as f:
+                    existing_content = f.read()
+
+                try:
+                    split_index = existing_content.index('design:')
+                    end_of_file_content = existing_content[split_index:].strip()
+                except ValueError:
+                    end_of_file_content = ''
+
+                combined_yaml = f"{yaml_string.strip()}\n{end_of_file_content}\n"
+
+                with open(yaml_path, "w") as f:
+                    f.write(combined_yaml.strip())
+
+                render_command = [
+                    "rendercv", "render", yaml_path_base,
+                    "--pdf-path", final_pdf_path,
+                    "--design.page.show_last_updated_date", "false",
+                    "--locale.phone_number_format", "international"
+                ]
+                subprocess.run(render_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+                if not os.path.exists(final_pdf_path):
+                    raise Exception("Failed to generate PDF file despite successful command execution.")
+
+                with open(final_pdf_path, 'rb') as pdf_file:
+                    pdf_bytes = pdf_file.read()
+                    pdf_base64_string = base64.b64encode(pdf_bytes).decode('utf-8')
+
+                # Return both the tailored JSON and the base64 PDF string
+                return jsonify({
+                    "tailored_resume_json": tailored_resume_json,
+                    "pdf_base64_string": pdf_base64_string
+                })
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            elif e.response.status_code == 503:
+                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+            else:
+                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+            last_error = jsonify({"error": str(e)}), 500
+
+        print(f"Attempt {attempt + 1} failed: {last_error}")
+
+    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
 # if __name__ == "__main__": 
@@ -483,7 +555,7 @@ def tailor_resume_endpoint():
 #     # Run the tests
 #     run_tests()
 
-# if __name__ == '__main__':
+# if __name__ == '__main__': # TODO: Uncomment this when testing
 #     # This will run a development server that hot-reloads on file changes.
 #     # It will only run when you execute `python app.py`
 #     # Gunicorn will not execute this part of the code
