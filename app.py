@@ -483,8 +483,8 @@ def tailor_resume_endpoint():
 #     # Run the tests
 #     run_tests()
 
-if __name__ == '__main__':
-    # This will run a development server that hot-reloads on file changes.
-    # It will only run when you execute `python app.py`
-    # Gunicorn will not execute this part of the code
-    app.run(host='0.0.0.0', port=8080, debug=True)
+# if __name__ == '__main__':
+#     # This will run a development server that hot-reloads on file changes.
+#     # It will only run when you execute `python app.py`
+#     # Gunicorn will not execute this part of the code
+#     app.run(host='0.0.0.0', port=8080, debug=True)
