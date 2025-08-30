@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import warnings
 
 import jwt
 import requests
@@ -277,13 +278,14 @@ def analyze_job_posting_endpoint():
             if not llm_output:
                 raise ValueError('LLM output is empty.')
 
-            if not llm_output.startswith('```html'):
-                error_message = 'Response does not start with ```html```.'
+            if llm_output.startswith('```html'):
+                cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
+            else:
+                warning_message = 'Response does not start with ```html```.'
                 if private_data_logging:
-                    error_message += f' Response: {llm_output}'
-                raise ValueError(error_message)
-
-            cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
+                    warning_message += f' Response: {llm_output}'
+                warnings.warn(warning_message)
+                cleaned_output = llm_output.strip()
 
             lines = cleaned_output.split('\n', 1)
             job_id = lines[0].strip()
@@ -448,16 +450,16 @@ def tailor_resume_endpoint():
             if not json_string:
                 raise ValueError('LLM output is empty.')
 
-            if not json_string.startswith('```json') and not json_string.startswith('```'):
-                error_message = 'Response does not start with ```json```.'
-                if private_data_logging:
-                    error_message += f' Response: {json_string}'
-                raise ValueError(error_message)
-
             if json_string.startswith('```json'):
                 json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
             elif json_string.startswith('```'):
                 json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
+            else:
+                warning_message = 'Response does not start with ```json``` or ``````.'
+                if private_data_logging:
+                    warning_message += f' Response: {json_string}'
+                warnings.warn(warning_message)
+                json_string = json_string.strip()
 
             try:
                 tailored_resume_json = json.loads(json_string)
@@ -555,8 +557,8 @@ def tailor_resume_endpoint():
 #     # Run the tests
 #     run_tests()
 
-# if __name__ == '__main__': # TODO: Uncomment this when testing
-#     # This will run a development server that hot-reloads on file changes.
-#     # It will only run when you execute `python app.py`
-#     # Gunicorn will not execute this part of the code
-#     app.run(host='0.0.0.0', port=8080, debug=True)
+if __name__ == '__main__': # TODO: Uncomment this when testing
+    # This will run a development server that hot-reloads on file changes.
+    # It will only run when you execute `python app.py`
+    # Gunicorn will not execute this part of the code
+    app.run(host='0.0.0.0', port=8080, debug=True)
