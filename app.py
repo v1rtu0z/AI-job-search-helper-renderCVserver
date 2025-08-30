@@ -529,6 +529,7 @@ def tailor_resume_endpoint():
             if private_data_logging:
                 print(f"An HTTP error occurred while generating the PDF. Error: {e}")
                 print(f"LLM output: {json_string}")
+                print(f"Converted to YAML: {yaml_string}")
             if e.response.status_code == 429:
                 return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
             elif e.response.status_code == 503:
@@ -541,6 +542,7 @@ def tailor_resume_endpoint():
                 return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
             if " returned non-zero exit status 4." in error_str and private_data_logging:
                 print(f"LLM returned bad JSON: {json_string}")
+                print(f"Converted to YAML: {yaml_string}")
             last_error = jsonify({"error": str(e)}), 500
 
         print(f"Attempt {attempt + 1} failed: {last_error}")

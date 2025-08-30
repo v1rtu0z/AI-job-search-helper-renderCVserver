@@ -30,9 +30,13 @@ PROMPTS = {
               "projects": [...],
               "skills": [...],
               "certifications": [...],
+              "references": [...],
               ...
           }}
         }}
+        
+        In case that start/end dates are missing, you should omit them from the JSON output.
+        Also, if the website is not provided, omit it from the JSON output.
     """,
     "SEARCH_QUERY_ONLY": lambda resume_json_data: f"""
         Based on the user's structured resume data (JSON) provided, generate a personalized LinkedIn search query.
@@ -109,7 +113,7 @@ PROMPTS = {
     - Output ONLY valid JSON in the exact structure shown below.
     - Do NOT add any placeholders or example data.
     - The JSON you generate shouldn't contain strings in the format of <X or >X. These should always be separated by a space, like < X or > X.
-    - Start/end dates need to be in the format YYYY-MM.
+    - Start/end dates need to be in the format YYYY-MM. If they're not present in resume data, it's okay to omit them
     - Do not include additional details. Only use the input data to populate the output JSON.
     - You *have to* omit unnecessary or empty sections but maintain the structure for sections you include.
     - Pay attention not to confuse the user's location and the job's location.
@@ -197,6 +201,17 @@ PROMPTS = {
                         "date": "YYYY-MM",
                         "expiry_date": "YYYY-MM or empty string if no expiry",
                         "url": "credential url or empty string"
+                    }}
+                ],
+                "references": [
+                    {{
+                        "name": "Reference Name",
+                        "position": "Job Title",
+                        "organization": "Company Name",
+                        "contact": {{
+                            "email": "reference email",
+                            "phone": "reference phone"
+                        }}
                     }}
                 ]
             }}
