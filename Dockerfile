@@ -1,6 +1,13 @@
-FROM python:3.12-slim
+FROM python:3.12-slim as base
 
-# Set the working directory in the container
+# Build stage
+FROM base as builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Runtime stage
+FROM base
 WORKDIR /app
 
 RUN apt-get update && \
@@ -11,22 +18,11 @@ RUN apt-get update && \
     ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the application files into the container
-COPY requirements.txt .
-COPY job_analysis_format.html .
-COPY prompts.py .
-COPY app.py .
+# Copy from builder stage
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Install any needed packages specified in requirements.txt
-# This assumes you have a requirements.txt file in your project
-# When debugging, it's usually faster if --no-cache-dir is removed
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-# Prevent Python from buffering stdout and stderr
-ENV PYTHONUNBUFFERED=1
-
-# Expose the port that your application will run on
 EXPOSE 8080
-
-# Run your application
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "2", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
