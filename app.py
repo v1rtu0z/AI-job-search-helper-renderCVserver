@@ -240,7 +240,6 @@ def analyze_job_posting_endpoint():
     model_name = data.get('model_name')
     previous_analysis = data.get('previous_analysis')
     job_specific_context = data.get('job_specific_context')
-    private_data_logging = data.get('private_data_logging', False)
 
     if not job_posting_text or not resume_json_data:
         return jsonify({"error": "Missing 'job_posting_text' or 'resume_json_data'"}), 400
@@ -281,10 +280,6 @@ def analyze_job_posting_endpoint():
             if llm_output.startswith('```html'):
                 cleaned_output = llm_output.removeprefix('```html').removesuffix('```').strip()
             else:
-                warning_message = 'Response does not start with ```html```.'
-                if private_data_logging:
-                    warning_message += f' Response: {llm_output}'
-                warnings.warn(warning_message)
                 cleaned_output = llm_output.strip()
 
             lines = cleaned_output.split('\n', 1)
@@ -393,6 +388,52 @@ def array_buffer_to_base64(buffer) -> str:
     return base64.b64encode(buffer).decode('utf-8')
 
 
+def cleanup_returned_json(input_dict: dict):
+    for k, v in input_dict.items():
+        if isinstance(v, dict):
+            cleanup_returned_json(v)
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    cleanup_returned_json(item)
+                if item is None or item == '':
+                    v.remove(item)
+        elif v is None or v == '':
+            input_dict[k] = None
+        elif v.lower() in ["twitter/x", "twitter"]:
+            input_dict[k] = "X"
+
+
+def extract_errors_from_rendercv_output(stderr_output):
+    """Extract error messages from rendercv validation output"""
+    errors = []
+    lines = stderr_output.split('\n')
+
+    # Look for table-like structures
+    in_error_table = False
+
+    for line in lines:
+        line = line.strip()
+
+        # Detect start of error table
+        if 'Location' in line and 'Error Message' in line:
+            in_error_table = True
+            continue
+
+        # Parse error rows
+        if in_error_table and '│' in line:
+            parts = [p.strip() for p in line.split('│') if p.strip()]
+
+            if len(parts) >= 3:
+                errors.append({
+                    'location': parts[0],
+                    'input_value': parts[1],
+                    'error_message': parts[2]
+                })
+
+    return errors
+
+
 @app.route('/tailor-resume', methods=['POST'])
 @jwt_required
 @limiter.limit("2 per minute")
@@ -424,70 +465,81 @@ def tailor_resume_endpoint():
     last_error = None
     json_string = None
 
-    for attempt in range(max_attempts):
-        try:
-            # --- Step 1: Generate Tailored JSON Resume from LLM ---
-            llm = get_llm(user_api_key, model_name=model_name)
-            prompt = PROMPTS["JSON_CONVERSION"](
-                job_posting_text,
-                resume_json_data,
-                current_resume_data,
-                retry_feedback
+    resume_data = json.loads(resume_json_data)
+    full_name = resume_data["personal"]["full_name"].lower().replace(" ", "_")
+
+    rendercv_errors = []
+    same_errors_being_raised = True
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Check if the name field exists and is valid
+        if not full_name:
+            raise ValueError("Resume 'cv.name' field is missing or invalid.")
+
+        new_command = [
+            "rendercv", "new", full_name,
+            "--theme", theme
+        ]
+        subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+
+        yaml_path_base = f"{full_name}_CV.yaml"
+        yaml_path = os.path.join(temp_dir, yaml_path_base)
+        final_pdf_path = str(os.path.join(temp_dir, filename))
+
+        prompt = PROMPTS["JSON_CONVERSION"](
+            job_posting_text,
+            resume_json_data,
+            current_resume_data,
+            retry_feedback
+        )
+        messages = [
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* JSON resume, based on the job description.",
+            ),
+            ChatMessage(
+                role=MessageRole.USER,
+                content=prompt,
             )
-            messages = [
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="You are a professional career assistant. Your task is to convert the JSON resume data into a *tailored* JSON resume, based on the job description.",
-                ),
-                ChatMessage(
-                    role=MessageRole.USER,
-                    content=prompt,
-                )
-            ]
+        ]
 
-            response = llm.chat(messages)
-            json_string = response.message.content.strip()
-
-            if not json_string:
-                raise ValueError('LLM output is empty.')
-
-            if json_string.startswith('```json'):
-                json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
-            elif json_string.startswith('```'):
-                json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
-            else:
-                warning_message = 'Response does not start with ```json``` or ``````.'
-                if private_data_logging:
-                    warning_message += f' Response: {json_string}'
-                warnings.warn(warning_message)
-                json_string = json_string.strip()
-
+        for attempt in range(max_attempts):
             try:
-                tailored_resume_json = json.loads(json_string)
-            except json.JSONDecodeError as e:
-                return jsonify({"error": f"Invalid JSON response from LLM: {e}", "llm_raw_response": json_string}), 500
+                # --- Step 1: Generate Tailored JSON Resume from LLM ---
+                llm = get_llm(user_api_key, model_name=model_name)
 
-            # --- Step 2: Render PDF using the Tailored JSON ---
-            with tempfile.TemporaryDirectory() as temp_dir:
-                full_name = tailored_resume_json["cv"]["name"].lower().replace(" ", "_")
+                response = llm.chat(messages)
+                json_string = response.message.content.strip()
 
-                # Check if the name field exists and is valid
-                if not full_name:
-                    raise ValueError("Resume 'cv.name' field is missing or invalid.")
+                if not json_string:
+                    raise ValueError('LLM output is empty.')
 
-                new_command = [
-                    "rendercv", "new", full_name,
-                    "--theme", theme
-                ]
-                subprocess.run(new_command, capture_output=True, text=True, check=True, cwd=temp_dir)
+                if json_string.startswith('```json'):
+                    json_string = json_string.split('```json', 1)[1].rsplit('```', 1)[0].strip()
+                elif json_string.startswith('```'):
+                    json_string = json_string.split('```', 1)[1].rsplit('```', 1)[0].strip()
+                else:
+                    warning_message = 'Response does not start with ```json``` or ``````.'
+                    if private_data_logging:
+                        warning_message += f' Response: {json_string}'
+                    warnings.warn(warning_message)
+                    json_string = json_string.strip()
 
-                yaml_path_base = f"{full_name}_CV.yaml"
-                yaml_path = os.path.join(temp_dir, yaml_path_base)
-                final_pdf_path = str(os.path.join(temp_dir, filename))
+                # --- Step 2: Render PDF using the Tailored JSON ---
+                try:
+                    tailored_resume_json = json.loads(json_string)
+                    cleanup_returned_json(tailored_resume_json)
+                except json.JSONDecodeError as e:
+                    return jsonify(
+                        {"error": f"Invalid JSON response from LLM: {e}", "llm_raw_response": json_string}), 500
 
-                yaml_string = yaml.dump(tailored_resume_json, default_flow_style=False, allow_unicode=True,
-                                        sort_keys=False,
-                                        default_style='"')
+                yaml_string = yaml.dump(
+                    tailored_resume_json,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                    default_style='"'
+                )
                 yaml_string = re.sub(r'^(\s*)(-\s+)?"([^"]+)":(\s)', r'\1\2\3:\4', yaml_string, flags=re.MULTILINE)
 
                 with open(yaml_path, "r") as f:
@@ -525,29 +577,45 @@ def tailor_resume_endpoint():
                     "pdf_base64_string": pdf_base64_string
                 })
 
-        except requests.exceptions.HTTPError as e:
-            if private_data_logging:
-                print(f"An HTTP error occurred while generating the PDF. Error: {e}")
-                print(f"LLM output: {json_string}")
-                print(f"Converted to YAML: {yaml_string}")
-            if e.response.status_code == 429:
-                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-            elif e.response.status_code == 503:
-                return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
-            else:
-                last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
-        except Exception as e:
-            error_str = str(e).lower()
-            if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
-                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
-            if " returned non-zero exit status 4." in error_str and private_data_logging:
-                print(f"LLM returned bad JSON: {json_string}")
-                print(f"Converted to YAML: {yaml_string}")
-            last_error = jsonify({"error": str(e)}), 500
+            except requests.exceptions.HTTPError as e:
+                if private_data_logging:
+                    print(f"An HTTP error occurred while generating the PDF. Error: {e}")
+                    print(f"LLM output: {json_string}")
+                if e.response.status_code == 429:
+                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                elif e.response.status_code == 503:
+                    return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 503
+                else:
+                    last_error = jsonify({"error": f"HTTP error: {str(e)}"}), 500
+            except subprocess.CalledProcessError as e:
+                print(f"Command failed with return code {e.returncode}")
+                lines = e.stdout.split('\n')[19:]
+                error_messages = [
+                    el['error_message'] for el in
+                    (extract_errors_from_rendercv_output("\n".join(lines)))
+                ]
+                if rendercv_errors and rendercv_errors != error_messages:
+                    same_errors_being_raised = False
+                else:
+                    rendercv_errors = error_messages
 
-        print(f"Attempt {attempt + 1} failed: {last_error}")
+                if private_data_logging:
+                    print(f"LLM returned bad JSON: {json_string}")
 
-    return last_error if last_error else jsonify({"error": "Unknown error occurred"}), 500
+                last_error = jsonify({"error": str(e)}), 500
+            except Exception as e:
+                error_str = str(e).lower()
+                if any(phrase in error_str for phrase in ['rate limit', 'quota', 'too many requests', '429']):
+                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                last_error = jsonify({"error": str(e)}), 500
+
+            print(f"Attempt {attempt + 1} failed: {last_error}")
+
+        if same_errors_being_raised:
+            return jsonify({"error": rendercv_errors}), 422
+
+        return last_error if last_error else (jsonify({"error": "Unknown error occurred"}), 500)
+
 
 # NOTE: # Uncomment when testing and debugging. Rate limiting needs to be commented for testing
 # if __name__ == "__main__": 
@@ -565,7 +633,7 @@ def tailor_resume_endpoint():
 #     # Run the tests
 #     run_tests()
 
-if __name__ == '__main__': # TODO: Uncomment this when testing
+if __name__ == '__main__':
     # This will run a development server that hot-reloads on file changes.
     # It will only run when you execute `python app.py`
     # Gunicorn will not execute this part of the code

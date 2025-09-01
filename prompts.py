@@ -24,7 +24,7 @@ PROMPTS = {
                 "location": "..."
                 ...
               }},
-              "summary": "...",
+              "summary": [...],
               "education": [...],
               "experience": [...],
               "projects": [...],
@@ -130,7 +130,7 @@ PROMPTS = {
             "website": "website url",
             "social_networks": [
                 {{
-                    "network": "LinkedIn",
+                    "network": "LinkedIn", (here the keys must be one of: "LinkedIn", "GitHub", "GitLab", "Instagram", "ORCID", "Mastodon", "StackOverflow", "ResearchGate", "YouTube", "Google Scholar", "Telegram", "X" (It can't be twitter or anything else!))
                     "username": "username"
                 }},
                 {{
@@ -139,11 +139,14 @@ PROMPTS = {
                 }}
             ],
             "sections": {{
+                "summary": [
+                    "Summary text",
+                ],
                 "education": [
                     {{
                         "institution": "University Name",
-                        "area": "Field of Study",
-                        "degree": "Degree Type (One of: BA, BS, MA, MBA, Phd)",
+                        "area": "Field of Study", (this field is mandatory!)
+                        "degree": "Degree Type (One of: BA, BS, MA, MBA, Phd. Omit if not applicable)",
                         "start_date": "YYYY-MM",
                         "end_date": "YYYY-MM or present",
                         "location": "City, State/Country",
@@ -206,12 +209,10 @@ PROMPTS = {
                 "references": [
                     {{
                         "name": "Reference Name",
-                        "position": "Job Title",
-                        "organization": "Company Name",
-                        "contact": {{
-                            "email": "reference email",
-                            "phone": "reference phone"
-                        }}
+                        "highlights: [
+                            "Reference details 1",
+                            "Reference details 2"
+                        ]
                     }}
                 ]
             }}

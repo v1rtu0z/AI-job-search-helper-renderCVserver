@@ -1,7 +1,7 @@
-FROM python:3.12-slim as base
+FROM python:3.12-slim AS base
 
 # Build stage
-FROM base as builder
+FROM base AS builder
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
